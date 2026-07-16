@@ -1,0 +1,62 @@
+# Maven / Java build output
+/target/
+*.class
+
+# Logs, runtime data and diagnostics
+*.log
+/logs/
+/data/
+/diagnostics/
+*.pid
+*.hprof
+hs_err_pid*
+replay_pid*
+
+# IntelliJ IDEA
+/.idea/
+*.iml
+*.ipr
+*.iws
+
+# VS Code
+/.vscode/
+
+# Eclipse / Spring Tool Suite
+/.classpath
+/.project
+/.settings/
+/.factorypath
+/.springBeans
+/.sts4-cache/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+application-local.yml
+application-local.yaml
+application-local.properties
+application-*.local.yml
+application-*.local.yaml
+application-*.local.properties
+
+# Local Maven overrides; keep the portable .mvn/settings.xml tracked
+/.mvn/settings-local.xml
+
+# Local Docker Compose overrides
+/compose.override.yml
+/compose.override.yaml
+/docker-compose.override.yml
+/docker-compose.override.yaml
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temporary and editor backup files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~

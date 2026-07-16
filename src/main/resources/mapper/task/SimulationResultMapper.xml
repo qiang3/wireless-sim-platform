@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.chenmingqiang.wirelesssim.task.infrastructure.SimulationResultMapper">
+
+    <resultMap id="resultMap" type="com.chenmingqiang.wirelesssim.task.domain.SimulationResult">
+        <id property="id" column="id"/>
+        <result property="taskId" column="task_id"/>
+        <result property="throughput" column="throughput"/>
+        <result property="averageAoi" column="average_aoi"/>
+        <result property="convergenceStep" column="convergence_step"/>
+        <result property="metricsJson" column="metrics_json"/>
+        <result property="artifactPath" column="artifact_path"/>
+        <result property="createdAt" column="created_at"/>
+    </resultMap>
+
+    <insert id="insert"
+            parameterType="com.chenmingqiang.wirelesssim.task.domain.SimulationResult"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO simulation_result (
+            task_id, throughput, average_aoi, convergence_step,
+            metrics_json, artifact_path
+        ) VALUES (
+            #{taskId}, #{throughput}, #{averageAoi}, #{convergenceStep},
+            CAST(#{metricsJson} AS JSON), #{artifactPath}
+        )
+    </insert>
+
+    <select id="findOwnedByTaskId" resultMap="resultMap">
+        SELECT result.id, result.task_id, result.throughput, result.average_aoi,
+               result.convergence_step, result.metrics_json, result.artifact_path,
+               result.created_at
+        FROM simulation_result result
+        JOIN experiment_task task ON task.id = result.task_id
+        WHERE result.task_id = #{taskId}
+          AND task.creator_id = #{creatorId}
+        LIMIT 1
+    </select>
+</mapper>

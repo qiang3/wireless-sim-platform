@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.chenmingqiang.wirelesssim.scenario.infrastructure.ScenarioMapper">
+
+    <resultMap id="scenarioResultMap" type="com.chenmingqiang.wirelesssim.scenario.domain.SimulationScenario">
+        <id property="id" column="id"/>
+        <result property="ownerId" column="owner_id"/>
+        <result property="name" column="name"/>
+        <result property="description" column="description"/>
+        <result property="objective" column="objective"
+                javaType="com.chenmingqiang.wirelesssim.scenario.domain.ScenarioObjective"/>
+        <result property="configJson" column="config_json"/>
+        <result property="version" column="version"/>
+        <result property="archived" column="archived"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <sql id="scenarioColumns">
+        id, owner_id, name, description, objective, config_json,
+        version, archived, created_at, updated_at
+    </sql>
+
+    <insert id="insert" parameterType="com.chenmingqiang.wirelesssim.scenario.domain.SimulationScenario"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO simulation_scenario (owner_id, name, description, objective, config_json)
+        VALUES (#{ownerId}, #{name}, #{description}, #{objective}, CAST(#{configJson} AS JSON))
+    </insert>
+
+    <select id="findActiveOwnedById" resultMap="scenarioResultMap">
+        SELECT <include refid="scenarioColumns"/>
+        FROM simulation_scenario
+        WHERE id = #{id}
+          AND owner_id = #{ownerId}
+          AND archived = 0
+        LIMIT 1
+    </select>
+
+    <select id="countActiveByOwnerId" resultType="long">
+        SELECT COUNT(*)
+        FROM simulation_scenario
+        WHERE owner_id = #{ownerId}
+          AND archived = 0
+    </select>
+
+    <select id="findActivePageByOwnerId" resultMap="scenarioResultMap">
+        SELECT <include refid="scenarioColumns"/>
+        FROM simulation_scenario
+        WHERE owner_id = #{ownerId}
+          AND archived = 0
+        ORDER BY created_at DESC, id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <update id="updateOwnedWithVersion"
+            parameterType="com.chenmingqiang.wirelesssim.scenario.domain.SimulationScenario">
+        UPDATE simulation_scenario
+        SET name = #{name},
+            description = #{description},
+            objective = #{objective},
+            config_json = CAST(#{configJson} AS JSON),
+            version = version + 1
+        WHERE id = #{id}
+          AND owner_id = #{ownerId}
+          AND version = #{version}
+          AND archived = 0
+    </update>
+
+    <select id="countTasksByScenarioId" resultType="long">
+        SELECT COUNT(*)
+        FROM experiment_task
+        WHERE scenario_id = #{scenarioId}
+    </select>
+
+    <update id="archiveOwned">
+        UPDATE simulation_scenario
+        SET archived = 1,
+            version = version + 1
+        WHERE id = #{id}
+          AND owner_id = #{ownerId}
+          AND archived = 0
+    </update>
+</mapper>

@@ -1,0 +1,24 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: wireless-sim-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: wireless_sim
+      MYSQL_USER: wireless
+      MYSQL_PASSWORD: wireless_dev
+      MYSQL_ROOT_PASSWORD: root_dev
+      TZ: Asia/Shanghai
+    ports:
+      - "13306:3306"
+    volumes:
+      - wireless-sim-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+volumes:
+  wireless-sim-mysql-data:

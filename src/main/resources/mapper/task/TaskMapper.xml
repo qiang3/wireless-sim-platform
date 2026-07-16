@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.chenmingqiang.wirelesssim.task.infrastructure.TaskMapper">
+
+    <resultMap id="taskResultMap" type="com.chenmingqiang.wirelesssim.task.domain.ExperimentTask">
+        <id property="id" column="id"/>
+        <result property="taskNo" column="task_no"/>
+        <result property="scenarioId" column="scenario_id"/>
+        <result property="scenarioSnapshotJson" column="scenario_snapshot_json"/>
+        <result property="creatorId" column="creator_id"/>
+        <result property="algorithm" column="algorithm"
+                javaType="com.chenmingqiang.wirelesssim.task.domain.TaskAlgorithm"/>
+        <result property="trainingConfigJson" column="training_config_json"/>
+        <result property="priority" column="priority"/>
+        <result property="status" column="status"
+                javaType="com.chenmingqiang.wirelesssim.task.domain.TaskStatus"/>
+        <result property="progress" column="progress"/>
+        <result property="retryCount" column="retry_count"/>
+        <result property="maxRetryCount" column="max_retry_count"/>
+        <result property="idempotencyKey" column="idempotency_key"/>
+        <result property="requestHash" column="request_hash"/>
+        <result property="errorMessage" column="error_message"/>
+        <result property="lockVersion" column="lock_version"/>
+        <result property="submittedAt" column="submitted_at"/>
+        <result property="startedAt" column="started_at"/>
+        <result property="finishedAt" column="finished_at"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <sql id="taskColumns">
+        id, task_no, scenario_id, scenario_snapshot_json, creator_id,
+        algorithm, training_config_json, priority, status, progress,
+        retry_count, max_retry_count, idempotency_key, request_hash,
+        error_message, lock_version, submitted_at, started_at, finished_at,
+        created_at, updated_at
+    </sql>
+
+    <insert id="insert" parameterType="com.chenmingqiang.wirelesssim.task.domain.ExperimentTask"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO experiment_task (
+            task_no, scenario_id, scenario_snapshot_json, creator_id,
+            algorithm, training_config_json, priority, status,
+            idempotency_key, request_hash, submitted_at
+        ) VALUES (
+            #{taskNo}, #{scenarioId}, CAST(#{scenarioSnapshotJson} AS JSON), #{creatorId},
+            #{algorithm}, CAST(#{trainingConfigJson} AS JSON), #{priority}, #{status},
+            #{idempotencyKey}, #{requestHash}, CURRENT_TIMESTAMP(3)
+        )
+    </insert>
+
+    <select id="findByCreatorAndIdempotencyKey" resultMap="taskResultMap">
+        SELECT <include refid="taskColumns"/>
+        FROM experiment_task
+        WHERE creator_id = #{creatorId}
+          AND idempotency_key = #{idempotencyKey}
+        LIMIT 1
+    </select>
+
+    <select id="findOwnedById" resultMap="taskResultMap">
+        SELECT <include refid="taskColumns"/>
+        FROM experiment_task
+        WHERE id = #{id}
+          AND creator_id = #{creatorId}
+        LIMIT 1
+    </select>
+
+    <select id="findById" resultMap="taskResultMap">
+        SELECT <include refid="taskColumns"/>
+        FROM experiment_task
+        WHERE id = #{id}
+        LIMIT 1
+    </select>
+
+    <sql id="ownedFilters">
+        creator_id = #{creatorId}
+        <if test="status != null">
+            AND status = #{status}
+        </if>
+        <if test="algorithm != null">
+            AND algorithm = #{algorithm}
+        </if>
+    </sql>
+
+    <select id="countOwned" resultType="long">
+        SELECT COUNT(*)
+        FROM experiment_task
+        WHERE <include refid="ownedFilters"/>
+    </select>
+
+    <select id="findOwnedPage" resultMap="taskResultMap">
+        SELECT <include refid="taskColumns"/>
+        FROM experiment_task
+        WHERE <include refid="ownedFilters"/>
+        ORDER BY created_at DESC, id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <update id="cancelOwnedWithVersion">
+        UPDATE experiment_task
+        SET status = 'CANCELLED',
+            finished_at = CURRENT_TIMESTAMP(3),
+            lock_version = lock_version + 1
+        WHERE id = #{id}
+          AND creator_id = #{creatorId}
+          AND lock_version = #{version}
+          AND status IN ('PENDING', 'QUEUED', 'RUNNING')
+    </update>
+
+    <update id="retryOwnedWithVersion">
+        UPDATE experiment_task
+        SET status = 'QUEUED',
+            progress = 0,
+            retry_count = retry_count + 1,
+            error_message = NULL,
+            started_at = NULL,
+            finished_at = NULL,
+            lock_version = lock_version + 1
+        WHERE id = #{id}
+          AND creator_id = #{creatorId}
+          AND lock_version = #{version}
+          AND status = 'FAILED'
+          AND retry_count &lt; max_retry_count
+    </update>
+
+    <update id="enqueuePending">
+        UPDATE experiment_task
+        SET status = 'QUEUED',
+            lock_version = lock_version + 1
+        WHERE id = #{id}
+          AND status = 'PENDING'
+    </update>
+
+    <update id="claimQueuedForExecution">
+        UPDATE experiment_task
+        SET status = 'RUNNING',
+            progress = 0,
+            error_message = NULL,
+            started_at = CURRENT_TIMESTAMP(3),
+            finished_at = NULL,
+            lock_version = lock_version + 1
+        WHERE id = #{id}
+          AND status = 'QUEUED'
+    </update>
+
+    <select id="findPendingCandidateIds" resultType="long">
+        SELECT id
+        FROM experiment_task
+        WHERE status = 'PENDING'
+        ORDER BY priority DESC, submitted_at ASC, id ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="findQueuedCandidateIds" resultType="long">
+        SELECT id
+        FROM experiment_task
+        WHERE status = 'QUEUED'
+        ORDER BY priority DESC, submitted_at ASC, id ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="findStatusById"
+            resultType="com.chenmingqiang.wirelesssim.task.domain.TaskStatus">
+        SELECT status
+        FROM experiment_task
+        WHERE id = #{id}
+        LIMIT 1
+    </select>
+
+    <update id="updateRunningProgress">
+        UPDATE experiment_task
+        SET progress = #{progress}
+        WHERE id = #{id}
+          AND status = 'RUNNING'
+    </update>
+
+    <update id="markSucceeded">
+        UPDATE experiment_task
+        SET status = 'SUCCEEDED',
+            progress = 100,
+            error_message = NULL,
+            finished_at = CURRENT_TIMESTAMP(3),
+            lock_version = lock_version + 1
+        WHERE id = #{id}
+          AND status = 'RUNNING'
+    </update>
+
+    <update id="markFailed">
+        UPDATE experiment_task
+        SET status = 'FAILED',
+            error_message = #{errorMessage},
+            finished_at = CURRENT_TIMESTAMP(3),
+            lock_version = lock_version + 1
+        WHERE id = #{id}
+          AND status = 'RUNNING'
+    </update>
+</mapper>

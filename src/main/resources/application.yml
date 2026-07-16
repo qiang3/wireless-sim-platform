@@ -1,0 +1,50 @@
+spring:
+  application:
+    name: wireless-sim-platform
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:13306/wireless_sim?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
+    username: ${DB_USERNAME:wireless}
+    password: ${DB_PASSWORD:wireless_dev}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    validate-migration-naming: true
+
+mybatis:
+  mapper-locations: classpath:mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+    default-fetch-size: 100
+
+app:
+  security:
+    jwt:
+      issuer: wireless-sim-platform
+      access-token-ttl: 30m
+      secret-base64: ${JWT_SECRET_BASE64:}
+
+simulation:
+  execution:
+    enabled: ${SIMULATION_EXECUTION_ENABLED:true}
+    core-pool-size: ${SIMULATION_CORE_POOL_SIZE:2}
+    max-pool-size: ${SIMULATION_MAX_POOL_SIZE:2}
+    queue-capacity: ${SIMULATION_QUEUE_CAPACITY:20}
+    dispatch-interval-ms: ${SIMULATION_DISPATCH_INTERVAL_MS:1000}
+    dispatch-batch-size: ${SIMULATION_DISPATCH_BATCH_SIZE:20}
+    step-delay-ms: ${SIMULATION_STEP_DELAY_MS:200}
+    recovery-scan-interval-ms: ${SIMULATION_RECOVERY_SCAN_INTERVAL_MS:10000}
+    heartbeat-timeout-seconds: ${SIMULATION_HEARTBEAT_TIMEOUT_SECONDS:30}
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
