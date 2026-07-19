@@ -33,13 +33,13 @@
 | 5. 仿真场景管理 | 已完成 | 场景创建、分页查询、详情、更新、软归档、所有权校验 | 用户只能操作本人场景；参数校验、乐观锁和归档规则有测试 |
 | 6. 实验任务管理 | 已完成 | 任务创建、查询、取消、重试、快照、幂等键 | 重复请求不创建重复任务；状态只能合法流转；并发更新不覆盖 |
 | 7. Java模拟执行与结果 | 已完成 | Java模拟Worker、进度更新、执行记录、结果保存 | 完成“提交—执行—结果查询”闭环；失败任务可重试 |
-| 8. Redis与RabbitMQ | 待开始 | Outbox、可靠消息投递、消费者幂等、重试死信、缓存与限流 | 消息重复消费不产生重复结果；发布或消费异常后任务可恢复；缓存失效不破坏业务正确性 |
+| 8. Redis与RabbitMQ | 进行中 | Outbox、可靠消息投递、消费者幂等、重试死信、缓存与限流 | 消息重复消费不产生重复结果；发布或消费异常后任务可恢复；缓存失效不破坏业务正确性 |
 | 9. Python仿真执行器 | 待开始 | Python/PyTorch Worker、GRPO/PPO调用、结果回传 | Java可调度真实仿真；吞吐量、AoI和收敛指标可以入库查询 |
 | 10. 工程化与求职材料 | 待开始 | OpenAPI、Docker部署、监控、压测、README、简历和面试材料 | 新环境可按文档启动；关键接口有测试和性能数据；简历表述可被代码与记录支撑 |
 
 ## 4. 当前里程碑
 
-当前里程碑：**准备Redis与RabbitMQ可靠异步化设计**。
+当前里程碑：**阶段8.6已完成，下一步进入阶段8.7 Redis热点缓存与提交限流**。
 
 阶段5已于2026-07-16完成并通过验收，交付范围包括：
 
@@ -128,6 +128,8 @@
 
 验收：工作区状态明确，阶段7代码与测试结果可追溯。
 
+完成记录：已在提交`4b38945`冻结阶段7与中文学习注释基线；从空`target`重新编译63个主源码和12个测试源码，全量26个测试通过，0失败、0错误、0跳过。
+
 ### 8.1：确认消息模型与RabbitMQ拓扑
 
 - 确认RabbitMQ只替换任务分发，MySQL仍是任务状态和结果的最终事实来源；
@@ -150,6 +152,8 @@ simulation.task.dlx
 
 验收：形成独立设计文档，本步骤不写业务代码。
 
+完成记录：已新增`docs/10-rabbitmq-outbox-design.md`，补充`attemptNo`防止旧消息抢占新重试；用户于2026-07-19确认全部采用推荐方案，阶段8.1正式关闭。
+
 ### 8.2：接入RabbitMQ基础环境
 
 - 在Docker Compose中增加RabbitMQ及管理界面；
@@ -158,6 +162,10 @@ simulation.task.dlx
 - 增加最小连接测试，验证应用可启动且拓扑存在。
 
 验收：RabbitMQ健康，管理页面可查看拓扑，原有26个测试不回归。
+
+完成记录：已使用`rabbitmq:4.3.2-management`启动本地Broker并接入Spring AMQP；应用在`dispatch-mode=rabbitmq`时声明3个持久化Direct Exchange、主执行/延迟重试/最终死信3个持久化Classic Queue及3条业务绑定。主队列支持5级优先级，重试队列使用10000毫秒TTL并通过DLX自动返回主执行路由。`RabbitConnectionIT`与`RabbitTopologyIT`均通过，Broker命令行已核验真实资源及参数；全量28个测试通过，0失败、0错误、0跳过。阶段8.2于2026-07-19正式关闭，尚未进入Outbox表和消息发布代码。
+
+当前记录：RabbitMQ 4.3.2基础容器已经通过Compose启动并达到`healthy`；5672、15672、`wireless_sim`虚拟主机、开发用户、管理HTTP接口和D盘命名卷均已验证。Spring AMQP Starter、连接、Confirm、Return、mandatory、手动ACK和监听并发配置已经接入；`RabbitConnectionIT`真实连接成功，全量27个测试通过。下一小步是由应用声明交换机、队列、绑定和死信参数。
 
 ### 8.3：建立Outbox并保证任务提交原子性
 
@@ -168,8 +176,15 @@ simulation.task.dlx
 
 验收：不存在“任务已经进入待执行状态但没有可恢复事件”的状态。
 
+完成记录：第1步完成V3迁移，第2步完成Java持久化层，第3步把首次提交与人工重试接入Outbox。第4步新增`TaskOutboxTransactionIT`，仅用`@MockitoBean`让Outbox插入主动失败，任务服务、任务Mapper、MySQL和Spring事务管理器保持真实。测试证明首次提交失败后不存在任务记录；人工重试失败后任务仍为`FAILED`，`retry_count=0`、`lock_version=0`且原错误信息不变，两种情况均无事件落库。定向2项及全量34项测试通过。阶段8.3于2026-07-19完成，达到“任务状态变化与可恢复事件只能同时提交或同时回滚”的验收要求。
+
 ### 8.4：实现Outbox可靠发布器
 
+- [x] 第1步：类型安全配置、批量领取、并发隔离和超时租约恢复；
+- [x] 第2步：发送单条持久化消息，接入Publisher Confirm与Return；
+- [x] 第3步：按确认结果更新成功/失败状态，实现5秒至5分钟指数退避；
+- [x] 第4步：增加每秒扫描、每批20条的定时发布器；
+- [x] 第5步：模拟Broker不可用、不可路由和状态更新失败并完成验收；
 - 批量领取待发布事件，发送到RabbitMQ；
 - 开启Publisher Confirm和Return，区分Broker确认、不可路由与网络异常；
 - 确认成功后标记事件已发布，失败则记录次数和下次重试时间；
@@ -177,24 +192,41 @@ simulation.task.dlx
 
 验收：模拟RabbitMQ不可用、不可路由和状态更新失败，事件都能恢复或再次发送。
 
+第1步完成记录：新增`OutboxPublisherProperties`并绑定扫描间隔、批量大小、租约、确认超时和重试延迟；新增`OutboxClaimService`，在短事务内用`FOR UPDATE SKIP LOCKED`锁定可发送事件，再以`claimed_by/claimed_at`标记为`SENDING`并递增发布尝试次数；新增超时租约恢复SQL。领取查询按`next_attempt_at, created_at, id`排序，与发布扫描索引一致。真实MySQL并发测试证明两个发布器各领取不同事件，超时领取可恢复；全量37项测试通过。当前尚未向RabbitMQ发送消息，阶段8.4整体仍在进行中。
+
+第2步完成记录：新增`OutboxMessagePublisher`和结构化发布结果，发送UTF-8 JSON持久化消息，并设置`messageId/correlationId/type/priority/timestamp`及事件、聚合、尝试号、消息版本等Header；使用`CorrelationData`等待最长5秒的Publisher Confirm，并优先检查mandatory Return。结果明确区分`ACK/RETURNED/NACK/TIMEOUT/SEND_FAILED`。5项单元测试覆盖全部分支，真实RabbitMQ测试证明消息进入主执行队列且属性完整；全量43项测试通过。当前尚未根据结果更新Outbox数据库状态，也尚未增加定时扫描器。
+
+第3步完成记录：新增`OutboxRetryBackoffCalculator`和`OutboxPublishResultService`。只有`id/status=SENDING/claimed_by`同时匹配时才能落库；ACK更新为`PUBLISHED`并记录`published_at`，其他结果恢复`PENDING`、写入错误摘要并按5、10、20、40、80、160、300秒封顶退避。时间以MySQL当前时间为基准。错误领取者更新0行，真实MySQL与退避测试全部通过。
+
+第4步完成记录：新增`OutboxPublisherScheduler`，仅在`dispatch-mode=rabbitmq`且`simulation.outbox.enabled=true`时创建。`publishOnce`以fixedDelay方式每秒执行“领取一批、逐条发送、逐条落库”；`recoverExpiredOnce`独立恢复2分钟租约外的`SENDING`事件。领取事务、网络发送和结果事务彼此分离，单条异常不阻断同批其他事件。真实MySQL与RabbitMQ测试验证事件从`PENDING`经`SENDING`进入`PUBLISHED`并到达主执行队列。
+
+第5步完成记录：真实Broker测试验证不可路由消息即使Confirm ACK仍返回`RETURNED`；故障注入验证`TIMEOUT/SEND_FAILED`进入持久化退避；结果落库异常时事件保留`SENDING`并由租约恢复为`PENDING`。并发领取、所有权竞争、NACK、Confirm超时、Broker异常、Return和完整成功闭环均有测试覆盖。全量55项测试通过，0失败、0错误、0跳过。阶段8.4于2026-07-19正式关闭。
+
 ### 8.5：实现RabbitMQ消费者并替换任务扫描分发
 
-- 使用`@RabbitListener`接收执行消息，配置手动ACK和合理的prefetch；
-- 消费者校验消息版本，并使用事件ID和数据库条件更新实现幂等；
-- 继续复用阶段7的状态机、`task_execution`、Java模拟Worker、心跳、取消和结果事务；
-- 业务事务成功后ACK，失败时按异常类型决定重试或拒绝；
-- 关闭阶段7对`QUEUED`任务的常规扫描，保留可选的数据库修复任务，不让两套正常分发同时运行。
+- [x] 使用`@RabbitListener`接收执行消息，配置手动ACK和合理的prefetch；
+- [x] 校验消息版本、载荷和AMQP属性，按任务状态与`attemptNo`分类消费；
+- [x] 使用`taskId + QUEUED + retry_count`条件更新和执行记录唯一约束实现幂等；
+- [x] 同步复用阶段7的状态机、`task_execution`、Java模拟Worker、心跳、取消和结果事务；
+- [x] 成功、明确业务失败、重复和旧消息ACK；永久非法消息Reject；临时异常NACK并重回队列；
+- [x] 通过`dispatch-mode`互斥启用MySQL扫描器或RabbitMQ消费者，超时恢复器继续保留。
 
 验收：重复发送同一消息不会产生重复执行记录或结果；两个消费者可以正确分担不同任务。
 
+完成记录：新增版本化消息校验器、消费准备结果、严格执行轮次抢占入口和同步`@RabbitListener`。首次`PENDING`消息先进入`QUEUED`；抢占SQL同时匹配任务ID、`QUEUED`和`retry_count = attemptNo - 1`，并用消息中的准确轮次创建`task_execution`。消费者只在Worker结果可靠落库或幂等吸收后ACK；非法契约、任务不存在和未来轮次Reject；未预期临时异常在阶段8.5暂时NACK并重新入队。真实MySQL/RabbitMQ测试验证成功、重复消息、业务失败、严格并发抢占和两种分发模式互斥。全量71项测试通过，0失败、0错误、0跳过，阶段8.5于2026-07-19正式关闭。默认分发模式仍保留`mysql`，待8.6有限重试和死信闭环完成后再评估切换。
+
 ### 8.6：实现有限重试和死信闭环
 
-- 区分临时异常与永久异常，参数错误等永久异常不做无意义重试；
-- 临时异常进入带TTL的重试队列，达到上限后进入死信队列；
-- 记录消息重试次数、最终失败原因，并同步任务/执行记录状态；
-- 提供死信查看和人工重新驱动的明确流程，不自动无限循环。
+- [x] 区分临时异常与永久异常，永久异常不做无意义重试；
+- [x] 临时异常进入10秒TTL重试队列，总处理次数达到3次后进入最终死信；
+- [x] 用`x-delivery-attempt/x-last-error/x-last-failed-at/x-final-failure`记录处理历史；
+- [x] 重试/死信转发等待Publisher Confirm并检查Return，成功后才ACK原消息；
+- [x] 重试耗尽后条件同步匹配轮次且仍待执行的任务为`FAILED`；
+- [x] 提供RabbitMQ管理界面、命令行查看和人工重新驱动流程，不自动无限循环。
 
 验收：临时失败可恢复，永久失败不会形成重试风暴，死信可定位和处理。
+
+完成记录：新增`TaskMessageForwarder`，复制原消息并可靠发布到重试或最终死信交换机，使用Publisher Confirm、mandatory Return和5秒确认超时决定是否可以ACK原消息。首次消息按第1次处理，临时异常在未达到3次时写入下一次`x-delivery-attempt`并进入10秒TTL队列，TTL到期由RabbitMQ自动回到主队列；第3次临时失败或永久契约错误进入最终死信队列。新增`TaskMessageFailureService`，只把相同`attemptNo`且仍为`PENDING/QUEUED`的任务条件更新为`FAILED`，不覆盖`RUNNING`和业务终态。单元测试、真实MySQL测试、真实RabbitMQ重试/TTL回流/最终死信测试及全量回归全部通过：88项测试，0失败、0错误、0跳过。阶段8.6于2026-07-19正式关闭。可靠消息闭环验收完成后，生产默认`dispatch-mode`已切换为`rabbitmq`；`mysql`模式继续保留为显式回退方案。
 
 ### 8.7：按明确场景引入Redis
 

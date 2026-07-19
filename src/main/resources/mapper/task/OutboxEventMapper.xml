@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.chenmingqiang.wirelesssim.task.infrastructure.OutboxEventMapper">
+
+    <!-- 把数据库下划线列完整映射到OutboxEvent的驼峰属性。 -->
+    <resultMap id="outboxEventResultMap"
+               type="com.chenmingqiang.wirelesssim.task.domain.OutboxEvent">
+        <id property="id" column="id"/>
+        <result property="eventId" column="event_id"/>
+        <result property="aggregateType" column="aggregate_type"/>
+        <result property="aggregateId" column="aggregate_id"/>
+        <result property="eventType" column="event_type"/>
+        <result property="attemptNo" column="attempt_no"/>
+        <result property="schemaVersion" column="schema_version"/>
+        <result property="payloadJson" column="payload_json"/>
+        <result property="priority" column="priority"/>
+        <result property="status" column="status"
+                javaType="com.chenmingqiang.wirelesssim.task.domain.OutboxStatus"/>
+        <result property="publishAttempts" column="publish_attempts"/>
+        <result property="nextAttemptAt" column="next_attempt_at"/>
+        <result property="claimedBy" column="claimed_by"/>
+        <result property="claimedAt" column="claimed_at"/>
+        <result property="lastError" column="last_error"/>
+        <result property="occurredAt" column="occurred_at"/>
+        <result property="publishedAt" column="published_at"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <!-- 集中维护查询列，避免多个SELECT遗漏新字段。 -->
+    <sql id="outboxEventColumns">
+        id, event_id, aggregate_type, aggregate_id, event_type,
+        attempt_no, schema_version, payload_json, priority, status,
+        publish_attempts, next_attempt_at, claimed_by, claimed_at,
+        last_error, occurred_at, published_at, created_at, updated_at
+    </sql>
+
+    <!-- 新事件固定从PENDING开始；发布状态相关默认值由数据库统一生成。 -->
+    <insert id="insertPending"
+            parameterType="com.chenmingqiang.wirelesssim.task.domain.OutboxEvent"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO outbox_event (
+            event_id, aggregate_type, aggregate_id, event_type,
+            attempt_no, schema_version, payload_json, priority, occurred_at
+        ) VALUES (
+            #{eventId}, #{aggregateType}, #{aggregateId}, #{eventType},
+            #{attemptNo}, #{schemaVersion}, CAST(#{payloadJson} AS JSON),
+            #{priority}, #{occurredAt}
+        )
+    </insert>
+
+    <!-- event_id用于跨系统追踪单个技术事件。 -->
+    <select id="findByEventId" resultMap="outboxEventResultMap">
+        SELECT <include refid="outboxEventColumns"/>
+        FROM outbox_event
+        WHERE event_id = #{eventId}
+        LIMIT 1
+    </select>
+
+    <!-- 业务唯一键用于定位同一个任务执行尝试产生的事件。 -->
+    <select id="findByBusinessKey" resultMap="outboxEventResultMap">
+        SELECT <include refid="outboxEventColumns"/>
+        FROM outbox_event
+        WHERE aggregate_type = #{aggregateType}
+          AND aggregate_id = #{aggregateId}
+          AND event_type = #{eventType}
+          AND attempt_no = #{attemptNo}
+        LIMIT 1
+    </select>
+
+    <!--
+      锁住当前可以发布的事件；SKIP LOCKED让并行发布器直接跳过其他事务已锁定的行。
+      排序字段稳定，确保较早创建的事件优先被领取。
+    -->
+    <select id="lockPublishCandidates" resultMap="outboxEventResultMap">
+        SELECT <include refid="outboxEventColumns"/>
+        FROM outbox_event
+        WHERE status = 'PENDING'
+          AND next_attempt_at &lt;= CURRENT_TIMESTAMP(3)
+        ORDER BY next_attempt_at, created_at, id
+        LIMIT #{limit}
+        FOR UPDATE SKIP LOCKED
+    </select>
+
+    <!-- 领取动作与上面的加锁查询处于同一短事务中。 -->
+    <update id="markClaimed">
+        UPDATE outbox_event
+        SET status = 'SENDING',
+            claimed_by = #{publisherId},
+            claimed_at = CURRENT_TIMESTAMP(3),
+            publish_attempts = publish_attempts + 1,
+            last_error = NULL
+        WHERE status = 'PENDING'
+          AND id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </update>
+
+    <!-- 重新读取数据库中的最新值，避免发布阶段使用领取前的旧状态。 -->
+    <select id="findClaimedBy" resultMap="outboxEventResultMap">
+        SELECT <include refid="outboxEventColumns"/>
+        FROM outbox_event
+        WHERE status = 'SENDING'
+          AND claimed_by = #{publisherId}
+          AND id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+        ORDER BY created_at, id
+    </select>
+
+    <!--
+      租约超时说明原发布器可能已经宕机。恢复后其他发布器可以再次领取，
+      但publish_attempts不回退，因为这次领取确实已经发生过。
+    -->
+    <update id="recoverExpiredClaims">
+        UPDATE outbox_event
+        SET status = 'PENDING',
+            next_attempt_at = CURRENT_TIMESTAMP(3),
+            claimed_by = NULL,
+            claimed_at = NULL,
+            last_error = #{errorMessage}
+        WHERE status = 'SENDING'
+          AND (
+            claimed_at IS NULL
+            OR claimed_at &lt; TIMESTAMPADD(SECOND, -#{leaseSeconds}, CURRENT_TIMESTAMP(3))
+          )
+    </update>
+
+    <!--
+      ACK落库必须校验领取者。旧发布器即使迟到收到ACK，也不能覆盖租约恢复后新发布器的状态。
+    -->
+    <update id="markPublished">
+        UPDATE outbox_event
+        SET status = 'PUBLISHED',
+            published_at = CURRENT_TIMESTAMP(3),
+            claimed_by = NULL,
+            claimed_at = NULL,
+            last_error = NULL
+        WHERE id = #{id}
+          AND status = 'SENDING'
+          AND claimed_by = #{publisherId}
+    </update>
+
+    <!--
+      失败后恢复PENDING，并使用数据库当前时间计算下次发送时刻，避免应用与数据库时钟偏差。
+    -->
+    <update id="rescheduleAfterFailure">
+        UPDATE outbox_event
+        SET status = 'PENDING',
+            next_attempt_at = TIMESTAMPADD(
+                MICROSECOND,
+                #{delayMillis} * 1000,
+                CURRENT_TIMESTAMP(3)
+            ),
+            claimed_by = NULL,
+            claimed_at = NULL,
+            last_error = #{errorMessage}
+        WHERE id = #{id}
+          AND status = 'SENDING'
+          AND claimed_by = #{publisherId}
+    </update>
+</mapper>

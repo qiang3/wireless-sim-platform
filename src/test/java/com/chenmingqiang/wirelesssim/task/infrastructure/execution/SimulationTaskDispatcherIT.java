@@ -7,11 +7,13 @@ import com.chenmingqiang.wirelesssim.common.error.BusinessException;
 import com.chenmingqiang.wirelesssim.task.api.TaskActionRequest;
 import com.chenmingqiang.wirelesssim.task.application.TaskResultService;
 import com.chenmingqiang.wirelesssim.task.application.TaskService;
+import com.chenmingqiang.wirelesssim.task.infrastructure.messaging.TaskExecutionMessageListener;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 @SpringBootTest(properties = {
@@ -33,8 +35,17 @@ class SimulationTaskDispatcherIT {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private ApplicationContext applicationContext;
+
     private Long userId;
     private Long otherUserId;
+
+    @Test
+    void mysqlModeCreatesDispatcherButNotRabbitConsumer() {
+        assertThat(applicationContext.getBeansOfType(SimulationTaskDispatcher.class)).hasSize(1);
+        assertThat(applicationContext.getBeansOfType(TaskExecutionMessageListener.class)).isEmpty();
+    }
 
     @AfterEach
     void cleanUp() {

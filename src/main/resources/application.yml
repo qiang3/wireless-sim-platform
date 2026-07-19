@@ -14,6 +14,31 @@ spring:
     enabled: true
     locations: classpath:db/migration
     validate-migration-naming: true
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:wireless}
+    password: ${RABBITMQ_PASSWORD:wireless_dev}
+    virtual-host: ${RABBITMQ_VHOST:wireless_sim}
+    connection-timeout: 5s
+    requested-heartbeat: 30s
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+      retry:
+        enabled: false
+    listener:
+      type: simple
+      simple:
+        acknowledge-mode: manual
+        concurrency: 2
+        max-concurrency: 2
+        prefetch: 1
+        default-requeue-rejected: false
+        missing-queues-fatal: true
+        retry:
+          enabled: false
 
 mybatis:
   mapper-locations: classpath:mapper/**/*.xml
@@ -29,8 +54,17 @@ app:
       secret-base64: ${JWT_SECRET_BASE64:}
 
 simulation:
+  outbox:
+    enabled: ${SIMULATION_OUTBOX_ENABLED:true}
+    scan-interval: ${SIMULATION_OUTBOX_SCAN_INTERVAL:1s}
+    batch-size: ${SIMULATION_OUTBOX_BATCH_SIZE:20}
+    lease-duration: ${SIMULATION_OUTBOX_LEASE_DURATION:2m}
+    confirm-timeout: ${SIMULATION_OUTBOX_CONFIRM_TIMEOUT:5s}
+    retry-base-delay: ${SIMULATION_OUTBOX_RETRY_BASE_DELAY:5s}
+    retry-max-delay: ${SIMULATION_OUTBOX_RETRY_MAX_DELAY:5m}
   execution:
     enabled: ${SIMULATION_EXECUTION_ENABLED:true}
+    dispatch-mode: ${SIMULATION_DISPATCH_MODE:rabbitmq}
     core-pool-size: ${SIMULATION_CORE_POOL_SIZE:2}
     max-pool-size: ${SIMULATION_MAX_POOL_SIZE:2}
     queue-capacity: ${SIMULATION_QUEUE_CAPACITY:20}
@@ -39,6 +73,12 @@ simulation:
     step-delay-ms: ${SIMULATION_STEP_DELAY_MS:200}
     recovery-scan-interval-ms: ${SIMULATION_RECOVERY_SCAN_INTERVAL_MS:10000}
     heartbeat-timeout-seconds: ${SIMULATION_HEARTBEAT_TIMEOUT_SECONDS:30}
+  messaging:
+    consumer-enabled: ${SIMULATION_MESSAGE_CONSUMER_ENABLED:true}
+    retry-delay: ${SIMULATION_MESSAGE_RETRY_DELAY:10s}
+    max-delivery-attempts: ${SIMULATION_MESSAGE_MAX_DELIVERY_ATTEMPTS:3}
+    max-priority: ${SIMULATION_MESSAGE_MAX_PRIORITY:5}
+    forward-confirm-timeout: ${SIMULATION_MESSAGE_FORWARD_CONFIRM_TIMEOUT:5s}
 
 server:
   port: 8080

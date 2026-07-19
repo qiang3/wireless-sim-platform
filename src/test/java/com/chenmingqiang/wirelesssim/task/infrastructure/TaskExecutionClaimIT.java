@@ -85,6 +85,39 @@ class TaskExecutionClaimIT {
                 .isEqualTo("RUNNING");
     }
 
+    @Test
+    void strictAttemptClaimRejectsOldMessageAndAllowsOnlyOneConcurrentConsumer() throws Exception {
+        long taskId = insertPendingTask();
+        assertThat(claimService.enqueuePendingTask(taskId)).isTrue();
+
+        // 当前retry_count为0，只允许attemptNo=1；旧/未来轮次都不能改变任务。
+        assertThat(claimService.claimQueuedTask(taskId, 2, "future-worker")).isEmpty();
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            Future<Optional<TaskExecution>> first = executor.submit(
+                    () -> awaitAndStrictClaim(taskId, 1, "rabbit-worker-1", ready, start));
+            Future<Optional<TaskExecution>> second = executor.submit(
+                    () -> awaitAndStrictClaim(taskId, 1, "rabbit-worker-2", ready, start));
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+
+            assertThat(List.of(first.get(10, TimeUnit.SECONDS), second.get(10, TimeUnit.SECONDS)))
+                    .filteredOn(Optional::isPresent)
+                    .hasSize(1);
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM task_execution WHERE task_id = ? AND attempt_no = 1",
+                Integer.class,
+                taskId
+        )).isEqualTo(1);
+    }
+
     private Optional<TaskExecution> awaitAndClaim(
             long taskId,
             String workerId,
@@ -96,6 +129,21 @@ class TaskExecutionClaimIT {
             throw new IllegalStateException("并发抢占测试启动超时");
         }
         return claimService.claimQueuedTask(taskId, workerId);
+    }
+
+    /** 让两个线程同时调用带attemptNo的严格抢占入口。 */
+    private Optional<TaskExecution> awaitAndStrictClaim(
+            long taskId,
+            int attemptNo,
+            String workerId,
+            CountDownLatch ready,
+            CountDownLatch start
+    ) throws InterruptedException {
+        ready.countDown();
+        if (!start.await(5, TimeUnit.SECONDS)) {
+            throw new IllegalStateException("严格并发抢占测试启动超时");
+        }
+        return claimService.claimQueuedTask(taskId, attemptNo, workerId);
     }
 
     private long insertPendingTask() {

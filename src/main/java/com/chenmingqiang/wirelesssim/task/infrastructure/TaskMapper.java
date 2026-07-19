@@ -57,6 +57,12 @@ public interface TaskMapper {
 
     int claimQueuedForExecution(@Param("id") Long id);
 
+    /** 只有状态和执行轮次同时匹配时才把任务抢占为RUNNING。 */
+    int claimQueuedForExecutionAttempt(
+            @Param("id") Long id,
+            @Param("expectedRetryCount") int expectedRetryCount
+    );
+
     List<Long> findPendingCandidateIds(@Param("limit") int limit);
 
     List<Long> findQueuedCandidateIds(@Param("limit") int limit);
@@ -72,6 +78,13 @@ public interface TaskMapper {
 
     int markFailed(
             @Param("id") Long id,
+            @Param("errorMessage") String errorMessage
+    );
+
+    /** 重试耗尽时，只把相同业务轮次且尚未开始执行的任务标记为FAILED。 */
+    int markMessageDeliveryExhausted(
+            @Param("id") Long id,
+            @Param("expectedRetryCount") int expectedRetryCount,
             @Param("errorMessage") String errorMessage
     );
 }

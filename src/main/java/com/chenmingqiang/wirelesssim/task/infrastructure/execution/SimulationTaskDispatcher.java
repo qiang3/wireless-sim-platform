@@ -23,6 +23,12 @@ import org.springframework.stereotype.Component;
         name = "enabled",
         havingValue = "true"
 )
+@ConditionalOnProperty(
+        prefix = "simulation.execution",
+        name = "dispatch-mode",
+        havingValue = "mysql",
+        matchIfMissing = true
+)
 /** 定时调度器：扫描数据库中的候选任务，并把 QUEUED 任务提交到受控线程池。 */
 public class SimulationTaskDispatcher {
 

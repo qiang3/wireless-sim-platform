@@ -20,5 +20,28 @@ services:
       retries: 20
       start_period: 20s
 
+  rabbitmq:
+    image: rabbitmq:4.3.2-management
+    container_name: wireless-sim-rabbitmq
+    hostname: wireless-sim-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: wireless
+      RABBITMQ_DEFAULT_PASS: wireless_dev
+      RABBITMQ_DEFAULT_VHOST: wireless_sim
+      TZ: Asia/Shanghai
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - wireless-sim-rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
 volumes:
   wireless-sim-mysql-data:
+  wireless-sim-rabbitmq-data:

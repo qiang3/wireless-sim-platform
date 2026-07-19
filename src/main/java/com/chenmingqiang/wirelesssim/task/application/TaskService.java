@@ -13,6 +13,7 @@ import com.chenmingqiang.wirelesssim.task.api.TrainingConfigRequest;
 import com.chenmingqiang.wirelesssim.task.domain.ExperimentTask;
 import com.chenmingqiang.wirelesssim.task.domain.TaskAlgorithm;
 import com.chenmingqiang.wirelesssim.task.domain.TaskStatus;
+import com.chenmingqiang.wirelesssim.task.infrastructure.OutboxEventMapper;
 import com.chenmingqiang.wirelesssim.task.infrastructure.TaskMapper;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -49,12 +50,24 @@ public class TaskService {
     private final ScenarioMapper scenarioMapper;
     /** 负责场景快照、训练参数和响应对象的 JSON 转换。 */
     private final ObjectMapper objectMapper;
+    /** 把待发布任务事件写入Outbox表的MyBatis代理。 */
+    private final OutboxEventMapper outboxEventMapper;
+    /** 统一生成版本化任务执行请求事件。 */
+    private final TaskOutboxEventFactory outboxEventFactory;
 
-    /** 方法说明：`TaskService`封装下面这段业务或转换逻辑。 */
-    public TaskService(TaskMapper taskMapper, ScenarioMapper scenarioMapper, ObjectMapper objectMapper) {
+    /** 通过构造方法注入任务、场景、Outbox和JSON依赖。 */
+    public TaskService(
+            TaskMapper taskMapper,
+            ScenarioMapper scenarioMapper,
+            ObjectMapper objectMapper,
+            OutboxEventMapper outboxEventMapper,
+            TaskOutboxEventFactory outboxEventFactory
+    ) {
         this.taskMapper = taskMapper;
         this.scenarioMapper = scenarioMapper;
         this.objectMapper = objectMapper;
+        this.outboxEventMapper = outboxEventMapper;
+        this.outboxEventFactory = outboxEventFactory;
     }
 
     // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
@@ -110,6 +123,8 @@ public class TaskService {
             }
             throw exception;
         }
+        // 任务和事件位于同一个@Transactional事务：任意一次插入失败都会一起回滚。
+        insertExecutionRequestedEvent(task, 1);
         return get(creatorId, task.getId());
     }
 
@@ -176,7 +191,25 @@ public class TaskService {
         if (taskMapper.retryOwnedWithVersion(taskId, creatorId, request.version()) == 0) {
             throw versionConflict();
         }
-        return get(creatorId, taskId);
+        // 重新读取更新后的retry_count和priority，确保事件尝试号来自数据库最终状态。
+        ExperimentTask retried = requireOwned(creatorId, taskId);
+        insertExecutionRequestedEvent(retried, retried.getRetryCount() + 1);
+        return toResponse(retried);
+    }
+
+    /**
+     * 生成并插入一条任务执行请求事件。
+     *
+     * <p>本方法由submit或retry的事务调用，不自行开启新事务，因此事件插入异常会让
+     * 前面已经执行的任务INSERT或UPDATE一并回滚。</p>
+     */
+    private void insertExecutionRequestedEvent(ExperimentTask task, int attemptNo) {
+        int affectedRows = outboxEventMapper.insertPending(
+                outboxEventFactory.createExecutionRequested(task.getId(), attemptNo, task.getPriority())
+        );
+        if (affectedRows != 1) {
+            throw new IllegalStateException("任务执行事件写入失败");
+        }
     }
 
     /** 比较请求摘要，区分“同一请求重放”和“错误复用幂等键”。 */

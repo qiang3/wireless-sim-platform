@@ -54,6 +54,8 @@ class TaskFlowTest {
                     username
             );
             for (Long userId : userIds) {
+                jdbcTemplate.update("DELETE FROM outbox_event WHERE aggregate_type='EXPERIMENT_TASK' "
+                        + "AND aggregate_id IN (SELECT id FROM experiment_task WHERE creator_id = ?)", userId);
                 jdbcTemplate.update("DELETE FROM simulation_result WHERE task_id IN "
                         + "(SELECT id FROM experiment_task WHERE creator_id = ?)", userId);
                 jdbcTemplate.update("DELETE FROM task_execution WHERE task_id IN "
@@ -79,6 +81,8 @@ class TaskFlowTest {
                 .andExpect(jsonPath("$.data.trainingConfig.batchSize").value(64))
                 .andReturn();
         long taskId = responseDataId(submitResult);
+
+        assertThatOutboxEvent(taskId, 1, 3);
 
         mockMvc.perform(get("/api/v1/tasks")
                         .header("Authorization", bearer(token))
@@ -123,6 +127,13 @@ class TaskFlowTest {
         submitTask(token, idempotencyKey, taskRequest(scenarioId, TaskAlgorithm.GRPO))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.data.id").value(firstTaskId));
+
+        // 幂等重放只返回原任务，不产生第二条执行请求事件。
+        org.assertj.core.api.Assertions.assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM outbox_event WHERE aggregate_id = ?",
+                Integer.class,
+                firstTaskId
+        )).isEqualTo(1);
 
         mockMvc.perform(get("/api/v1/tasks")
                         .header("Authorization", bearer(token)))
@@ -206,6 +217,13 @@ class TaskFlowTest {
                 .andExpect(jsonPath("$.data.retryCount").value(1))
                 .andExpect(jsonPath("$.data.errorMessage").doesNotExist())
                 .andExpect(jsonPath("$.data.version").value(1));
+
+        assertThatOutboxEvent(taskId, 2, 3);
+        org.assertj.core.api.Assertions.assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM outbox_event WHERE aggregate_id = ?",
+                Integer.class,
+                taskId
+        )).isEqualTo(2);
 
         jdbcTemplate.update(
                 "UPDATE experiment_task SET status='FAILED', retry_count=max_retry_count, "
@@ -304,5 +322,19 @@ class TaskFlowTest {
 
     private String bearer(String token) {
         return "Bearer " + token;
+    }
+
+    /** 验证指定任务尝试已经产生一条格式正确的待发布事件。 */
+    private void assertThatOutboxEvent(long taskId, int attemptNo, int expectedPriority) {
+        org.assertj.core.api.Assertions.assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM outbox_event
+                WHERE aggregate_type = 'EXPERIMENT_TASK'
+                  AND aggregate_id = ?
+                  AND event_type = 'TASK_EXECUTION_REQUESTED'
+                  AND attempt_no = ?
+                  AND status = 'PENDING'
+                  AND priority = ?
+                """, Integer.class, taskId, attemptNo, expectedPriority)).isEqualTo(1);
     }
 }

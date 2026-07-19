@@ -74,6 +74,38 @@ public class TaskExecutionClaimService {
         return Optional.of(saved);
     }
 
+    /**
+     * 按RabbitMQ消息携带的准确轮次抢占任务。
+     * SQL同时校验QUEUED和retry_count，防止旧消息执行后续人工重试。
+     */
+    @Transactional
+    public Optional<TaskExecution> claimQueuedTask(long taskId, int attemptNo, String workerId) {
+        validateWorkerId(workerId);
+        if (attemptNo <= 0) {
+            throw new IllegalArgumentException("attemptNo必须为正数");
+        }
+
+        int expectedRetryCount = attemptNo - 1;
+        if (taskMapper.claimQueuedForExecutionAttempt(taskId, expectedRetryCount) == 0) {
+            return Optional.empty();
+        }
+
+        TaskExecution execution = new TaskExecution();
+        execution.setTaskId(taskId);
+        execution.setAttemptNo(attemptNo);
+        execution.setWorkerId(workerId);
+        execution.setStatus(ExecutionStatus.RUNNING);
+        executionMapper.insertRunning(execution);
+
+        TaskExecution saved = executionMapper.findByTaskIdAndAttemptNo(taskId, attemptNo);
+        if (saved == null) {
+            throw new IllegalStateException(
+                    "严格抢占后无法读取执行记录：taskId=" + taskId + ", attemptNo=" + attemptNo
+            );
+        }
+        return Optional.of(saved);
+    }
+
     /** 方法说明：`validateWorkerId`封装下面这段业务或转换逻辑。 */
     private void validateWorkerId(String workerId) {
         if (workerId == null || workerId.isBlank()) {

@@ -145,6 +145,20 @@
           AND status = 'QUEUED'
     </update>
 
+    <!-- RabbitMQ严格抢占：旧消息不能抢占人工重试形成的新执行轮次。 -->
+    <update id="claimQueuedForExecutionAttempt">
+        UPDATE experiment_task
+        SET status = 'RUNNING',
+            progress = 0,
+            error_message = NULL,
+            started_at = CURRENT_TIMESTAMP(3),
+            finished_at = NULL,
+            lock_version = lock_version + 1
+        WHERE id = #{id}
+          AND status = 'QUEUED'
+          AND retry_count = #{expectedRetryCount}
+    </update>
+
     <select id="findPendingCandidateIds" resultType="long">
         SELECT id
         FROM experiment_task
@@ -195,5 +209,17 @@
             lock_version = lock_version + 1
         WHERE id = #{id}
           AND status = 'RUNNING'
+    </update>
+
+    <!-- 消息重试耗尽不能覆盖已运行或已形成业务终态的任务。 -->
+    <update id="markMessageDeliveryExhausted">
+        UPDATE experiment_task
+        SET status = 'FAILED',
+            error_message = #{errorMessage},
+            finished_at = CURRENT_TIMESTAMP(3),
+            lock_version = lock_version + 1
+        WHERE id = #{id}
+          AND status IN ('PENDING', 'QUEUED')
+          AND retry_count = #{expectedRetryCount}
     </update>
 </mapper>

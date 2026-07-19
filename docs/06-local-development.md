@@ -1,4 +1,4 @@
-# 本地开发与数据库启动
+# 本地开发环境启动
 
 ## 1. 启动Docker Desktop
 
@@ -27,7 +27,28 @@ docker compose ps mysql
 
 宿主机使用`13306`，是为了避开本机MySQL80占用的`3306`和Windows保留的`3307-3406`端口段。
 
-## 3. 启动Java应用
+## 3. 启动RabbitMQ
+
+```powershell
+docker compose up -d rabbitmq
+docker compose ps rabbitmq
+```
+
+本地连接信息：
+
+```text
+AMQP地址：localhost:5672
+管理页面：http://localhost:15672
+虚拟主机：wireless_sim
+用户：wireless
+密码：wireless_dev
+```
+
+管理页面用于查看连接、通道、交换机、队列、消息数量和消费者。上述账号只用于本地开发，部署环境必须改用外部配置的安全凭据。
+
+RabbitMQ使用Docker命名卷`wireless-sim-platform_wireless-sim-rabbitmq-data`保存持久化数据。当前Docker Desktop的自定义数据目录为`D:\WSL\DockerDesktopWSL`，主要镜像、容器层和命名卷都位于其中的`disk\docker_data.vhdx`虚拟磁盘内，而不是直接保存到项目源码目录。
+
+## 4. 启动Java应用
 
 项目使用完整的Oracle JDK 17.0.12。在IntelliJ中运行`WirelessSimApplication`，或在已经配置Java 17的终端中执行：
 
@@ -39,7 +60,7 @@ mvn -s .mvn/settings.xml spring-boot:run
 
 本地未配置`JWT_SECRET_BASE64`时，应用会生成一次性随机开发密钥，应用重启后旧Token会失效。部署环境必须通过环境变量提供固定的Base64密钥，不能把真实密钥提交到代码仓库。
 
-## 4. 运行测试
+## 5. 运行测试
 
 日常单元测试：
 
@@ -53,12 +74,37 @@ mvn -s .mvn/settings.xml test
 mvn -s .mvn/settings.xml -Dtest=DatabaseMigrationIT test
 ```
 
-数据库集成测试要求MySQL容器处于健康状态。
+现有数据库集成测试要求MySQL容器处于健康状态；阶段8增加的消息集成测试还会要求RabbitMQ容器健康。
 
-## 5. 停止环境
+## 6. 停止环境
 
 ```powershell
-docker compose stop mysql
+docker compose stop mysql rabbitmq
 ```
 
 该命令只停止容器，不删除数据库数据卷。不要随意执行带`-v`的删除命令。
+
+## 7. 查看和人工处理最终死信
+
+查看三个队列的待处理与未确认消息数：
+
+```powershell
+docker compose exec -T rabbitmq rabbitmqctl -p wireless_sim list_queues name messages_ready messages_unacknowledged
+```
+
+最终死信队列名称：
+
+```text
+simulation.task.dead.queue
+```
+
+在RabbitMQ管理页面中：
+
+1. 打开`http://localhost:15672`并登录；
+2. 选择`Queues and Streams`；
+3. 打开`simulation.task.dead.queue`；
+4. 在`Get messages`中先使用重新入队方式查看消息，避免检查时误删；
+5. 核对`x-delivery-attempt`、`x-last-error`、`x-last-failed-at`和`x-final-failure`；
+6. 同时查询MySQL任务当前状态与`retry_count`，确认死信是否仍然有效。
+
+人工重新驱动前必须先修复根因。确认需要重放后，在管理页面的`Exchanges`中打开`simulation.task.exchange`，使用路由键`simulation.task.execute`重新发布原始JSON载荷和必要Header。随后再从最终死信队列确认并移除原消息。不要直接建立死信队列到主交换机的自动回流，否则永久错误会形成循环。

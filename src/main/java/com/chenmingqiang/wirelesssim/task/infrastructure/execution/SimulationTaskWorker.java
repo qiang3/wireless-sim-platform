@@ -58,6 +58,18 @@ public class SimulationTaskWorker {
     public boolean execute(long taskId) {
         String workerId = instanceId + ":" + Thread.currentThread().getName();
         Optional<TaskExecution> claimed = claimService.claimQueuedTask(taskId, workerId);
+        return executeClaimedWhenPresent(taskId, claimed);
+    }
+
+    /** RabbitMQ入口：使用消息中的准确执行轮次进行严格抢占。 */
+    public boolean execute(long taskId, int attemptNo) {
+        String workerId = instanceId + ":" + Thread.currentThread().getName();
+        Optional<TaskExecution> claimed = claimService.claimQueuedTask(taskId, attemptNo, workerId);
+        return executeClaimedWhenPresent(taskId, claimed);
+    }
+
+    /** 统一处理抢占结果，供MySQL回退模式和RabbitMQ模式复用。 */
+    private boolean executeClaimedWhenPresent(long taskId, Optional<TaskExecution> claimed) {
         if (claimed.isEmpty()) {
             log.debug("任务未抢占成功，可能已被其他Worker处理：taskId={}", taskId);
             return false;
