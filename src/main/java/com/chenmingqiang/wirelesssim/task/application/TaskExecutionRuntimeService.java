@@ -11,11 +11,19 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
+// Spring说明：将该类注册为业务服务Bean，其他组件可通过构造方法注入它。
+
+/**
+ * Worker 运行期服务：加载不可变输入快照、读取状态，并原子更新进度与心跳。
+ */
 @Service
 public class TaskExecutionRuntimeService {
 
+    /** 字段说明：`taskMapper`保存该对象运行所需的依赖、配置或状态。 */
     private final TaskMapper taskMapper;
+    /** 字段说明：`executionMapper`保存该对象运行所需的依赖、配置或状态。 */
     private final TaskExecutionMapper executionMapper;
+    /** 字段说明：`objectMapper`保存该对象运行所需的依赖、配置或状态。 */
     private final ObjectMapper objectMapper;
 
     public TaskExecutionRuntimeService(
@@ -28,7 +36,10 @@ public class TaskExecutionRuntimeService {
         this.objectMapper = objectMapper;
     }
 
+    // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
+
     @Transactional(readOnly = true)
+    /** 从任务记录还原场景快照和训练配置，组成模拟引擎需要的完整上下文。 */
     public SimulationExecutionContext loadContext(long taskId) {
         ExperimentTask task = taskMapper.findById(taskId);
         if (task == null) {
@@ -41,7 +52,10 @@ public class TaskExecutionRuntimeService {
         );
     }
 
+    // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
+
     @Transactional(readOnly = true)
+    /** 方法说明：`findTaskStatus`封装下面这段业务或转换逻辑。 */
     public TaskStatus findTaskStatus(long taskId) {
         TaskStatus status = taskMapper.findStatusById(taskId);
         if (status == null) {
@@ -50,7 +64,13 @@ public class TaskExecutionRuntimeService {
         return status;
     }
 
+    // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
+
     @Transactional
+    /**
+     * 在一个事务中更新任务进度和执行记录心跳：两项都成功才提交；
+     * 心跳更新失败会抛异常，使之前的进度更新一并回滚，避免部分成功状态。
+     */
     public boolean updateProgressAndHeartbeat(long taskId, long executionId, int progress) {
         if (progress < 0 || progress > 100) {
             throw new IllegalArgumentException("任务进度必须在0到100之间");
@@ -64,11 +84,15 @@ public class TaskExecutionRuntimeService {
         return true;
     }
 
+    // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
+
     @Transactional
+    /** Worker 观察到任务已取消后，把本次执行记录也标记为 CANCELLED。 */
     public void markExecutionCancelled(long executionId) {
         executionMapper.markCancelled(executionId);
     }
 
+    /** 方法说明：`readJson`封装下面这段业务或转换逻辑。 */
     private <T> T readJson(String json, Class<T> type, String message) {
         try {
             return objectMapper.readValue(json, type);

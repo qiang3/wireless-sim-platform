@@ -9,16 +9,24 @@ import java.math.RoundingMode;
 import java.util.SplittableRandom;
 import org.springframework.stereotype.Component;
 
+// Spring说明：将该类交给Spring容器创建和管理。
+
+/**
+ * Java 模拟结果生成器，用于验证异步执行和结果闭环。
+ * 公式是确定性的工程合成公式，simulationMode=JAVA_MOCK、scientificResult=false，
+ * 不代表 GRPO/PPO 等算法的真实科研性能，也不人为制造算法间的优劣。
+ */
 @Component
 public class JavaMockSimulationEngine {
 
+    /** 使用场景种子与训练种子生成可复现的吞吐量、AoI 和收敛步数。 */
     public JavaMockSimulationResult simulate(
             ScenarioSnapshot snapshot,
             TrainingConfigRequest trainingConfig
     ) {
         ScenarioConfigRequest config = snapshot.config();
         long deterministicSeed = mixSeeds(config.randomSeed(), trainingConfig.randomSeed());
-        SplittableRandom random = new SplittableRandom(deterministicSeed);
+        SplittableRandom random = new SplittableRandom(deterministicSeed); // 相同输入得到相同伪随机扰动。
 
         double antennaGain = Math.log1p(config.antennaCount());
         double harvestedEnergy = config.averageGreenEnergy().doubleValue()
@@ -61,10 +69,12 @@ public class JavaMockSimulationEngine {
         );
     }
 
+    /** 合并两个随机种子，使场景或训练种子任一变化都会改变模拟序列。 */
     private long mixSeeds(long scenarioSeed, long trainingSeed) {
         return scenarioSeed * 31L + trainingSeed;
     }
 
+    /** 工程演示用接入方式系数，不应解读为科研对比结论。 */
     private double accessFactor(AccessScheme accessScheme) {
         return switch (accessScheme) {
             case RSMA -> 1.00;
@@ -73,6 +83,7 @@ public class JavaMockSimulationEngine {
         };
     }
 
+    /** 方法说明：`decimal`封装下面这段业务或转换逻辑。 */
     private BigDecimal decimal(double value) {
         return BigDecimal.valueOf(value).setScale(8, RoundingMode.HALF_UP);
     }

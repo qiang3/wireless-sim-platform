@@ -12,15 +12,25 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
+// Spring说明：将该类注册为业务服务Bean，其他组件可通过构造方法注入它。
+
+/**
+ * 执行生命周期服务：以事务维护任务、执行记录和模拟结果之间的一致性。
+ */
 @Service
 public class TaskExecutionLifecycleService {
 
     public static final String HEARTBEAT_TIMEOUT_ERROR = "Worker心跳超时";
+    /** 字段说明：`MAX_ERROR_LENGTH`保存该对象运行所需的依赖、配置或状态。 */
     private static final int MAX_ERROR_LENGTH = 1000;
 
+    /** 字段说明：`taskMapper`保存该对象运行所需的依赖、配置或状态。 */
     private final TaskMapper taskMapper;
+    /** 字段说明：`executionMapper`保存该对象运行所需的依赖、配置或状态。 */
     private final TaskExecutionMapper executionMapper;
+    /** 字段说明：`resultMapper`保存该对象运行所需的依赖、配置或状态。 */
     private final SimulationResultMapper resultMapper;
+    /** 字段说明：`objectMapper`保存该对象运行所需的依赖、配置或状态。 */
     private final ObjectMapper objectMapper;
 
     public TaskExecutionLifecycleService(
@@ -35,7 +45,10 @@ public class TaskExecutionLifecycleService {
         this.objectMapper = objectMapper;
     }
 
+    // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
+
     @Transactional
+    /** 成功闭环：任务→SUCCEEDED、执行记录→SUCCEEDED、结果入库，三步全部成功才提交。 */
     public boolean completeSuccessfully(
             long taskId,
             long executionId,
@@ -64,7 +77,10 @@ public class TaskExecutionLifecycleService {
         return true;
     }
 
+    // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
+
     @Transactional
+    /** 失败闭环；若用户已先取消任务，则执行记录跟随取消而不覆盖为 FAILED。 */
     public void failRunningExecution(long taskId, long executionId, String rawErrorMessage) {
         TaskStatus status = taskMapper.findStatusById(taskId);
         if (status == TaskStatus.CANCELLED) {
@@ -84,7 +100,13 @@ public class TaskExecutionLifecycleService {
         }
     }
 
+    // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
+
     @Transactional
+    /**
+     * 超时恢复采用“再次带超时条件更新”：扫描后若 Worker 已刷新心跳，UPDATE 会影响 0 行，
+     * 从而避免把已经恢复工作的执行误判为失败。
+     */
     public boolean recoverTimedOutExecution(
             long taskId,
             long executionId,
@@ -103,6 +125,7 @@ public class TaskExecutionLifecycleService {
         return true;
     }
 
+    /** 方法说明：`normalizeError`封装下面这段业务或转换逻辑。 */
     private String normalizeError(String errorMessage) {
         String normalized = errorMessage == null || errorMessage.isBlank()
                 ? "Worker执行失败"
@@ -112,6 +135,7 @@ public class TaskExecutionLifecycleService {
                 : normalized.substring(0, MAX_ERROR_LENGTH);
     }
 
+    /** 方法说明：`writeJson`封装下面这段业务或转换逻辑。 */
     private String writeJson(Object value) {
         try {
             return objectMapper.writeValueAsString(value);

@@ -14,17 +14,30 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+// Spring说明：将该类交给Spring容器创建和管理。
+
+/**
+ * Java Worker：抢占任务、分步汇报进度/心跳、协作取消、生成模拟结果并完成状态闭环。
+ */
 @Component
 public class SimulationTaskWorker {
 
+    /** 字段说明：`log`保存该对象运行所需的依赖、配置或状态。 */
     private static final Logger log = LoggerFactory.getLogger(SimulationTaskWorker.class);
+    /** 把一次演示执行拆成 10 步，便于观察进度、心跳与运行中取消。 */
     private static final int TOTAL_STEPS = 10;
 
+    /** 字段说明：`claimService`保存该对象运行所需的依赖、配置或状态。 */
     private final TaskExecutionClaimService claimService;
+    /** 字段说明：`runtimeService`保存该对象运行所需的依赖、配置或状态。 */
     private final TaskExecutionRuntimeService runtimeService;
+    /** 字段说明：`lifecycleService`保存该对象运行所需的依赖、配置或状态。 */
     private final TaskExecutionLifecycleService lifecycleService;
+    /** 字段说明：`simulationEngine`保存该对象运行所需的依赖、配置或状态。 */
     private final JavaMockSimulationEngine simulationEngine;
+    /** 字段说明：`properties`保存该对象运行所需的依赖、配置或状态。 */
     private final SimulationExecutionProperties properties;
+    /** 当前应用实例标识，与线程名组合后写入执行记录，便于排查由哪个 Worker 执行。 */
     private final String instanceId = "local-" + UUID.randomUUID().toString().substring(0, 12);
 
     public SimulationTaskWorker(
@@ -41,6 +54,7 @@ public class SimulationTaskWorker {
         this.properties = properties;
     }
 
+    /** 尝试抢占指定任务；未抢到不是异常，通常表示其他 Worker 已处理。 */
     public boolean execute(long taskId) {
         String workerId = instanceId + ":" + Thread.currentThread().getName();
         Optional<TaskExecution> claimed = claimService.claimQueuedTask(taskId, workerId);
@@ -66,6 +80,7 @@ public class SimulationTaskWorker {
         }
     }
 
+    /** 执行已抢占任务：每一步检查取消、延迟模拟工作、更新进度心跳，最后保存结果。 */
     private boolean executeClaimed(long taskId, TaskExecution execution) {
         SimulationExecutionContext context = runtimeService.loadContext(taskId);
 
@@ -111,12 +126,14 @@ public class SimulationTaskWorker {
         return true;
     }
 
+    /** 方法说明：`failureSummary`封装下面这段业务或转换逻辑。 */
     private String failureSummary(RuntimeException exception) {
         String message = exception.getMessage();
         return exception.getClass().getSimpleName()
                 + (message == null || message.isBlank() ? "" : ": " + message);
     }
 
+    /** 协作式取消：Worker 在安全检查点主动停止，而不是强制杀死线程。 */
     private boolean stopWhenCancelled(long taskId, long executionId) {
         if (runtimeService.findTaskStatus(taskId) != TaskStatus.CANCELLED) {
             return false;
@@ -126,6 +143,7 @@ public class SimulationTaskWorker {
         return true;
     }
 
+    /** 方法说明：`delayStep`封装下面这段业务或转换逻辑。 */
     private void delayStep() {
         if (properties.stepDelayMs() == 0) {
             return;

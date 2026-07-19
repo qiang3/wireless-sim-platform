@@ -29,24 +29,41 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
+// Spring说明：将该类注册为业务服务Bean，其他组件可通过构造方法注入它。
+
+/**
+ * 任务应用服务：处理任务提交、查询、取消和重试，并实现幂等、快照和乐观锁规则。
+ */
 @Service
 public class TaskService {
 
     // 优先级未显式提交时使用中间值，避免默认任务被误判为最高或最低优先级。
+    /** 字段说明：`DEFAULT_PRIORITY`保存该对象运行所需的依赖、配置或状态。 */
     private static final int DEFAULT_PRIORITY = 5;
+    /** 限制幂等键长度，避免请求头和唯一索引存储无界增长。 */
     private static final int MAX_IDEMPOTENCY_KEY_LENGTH = 64;
 
+    /** 任务表 MyBatis 数据访问代理。 */
     private final TaskMapper taskMapper;
+    /** 读取任务引用的场景，并校验场景属于提交人。 */
     private final ScenarioMapper scenarioMapper;
+    /** 负责场景快照、训练参数和响应对象的 JSON 转换。 */
     private final ObjectMapper objectMapper;
 
+    /** 方法说明：`TaskService`封装下面这段业务或转换逻辑。 */
     public TaskService(TaskMapper taskMapper, ScenarioMapper scenarioMapper, ObjectMapper objectMapper) {
         this.taskMapper = taskMapper;
         this.scenarioMapper = scenarioMapper;
         this.objectMapper = objectMapper;
     }
 
+    // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
+
     @Transactional
+    /**
+     * 提交任务。同一用户使用相同幂等键和相同参数重试时返回原任务；
+     * 相同幂等键搭配不同参数时返回冲突，防止客户端误把两个业务请求合并。
+     */
     public TaskResponse submit(Long creatorId, String rawIdempotencyKey, CreateTaskRequest request) {
         String idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
         int priority = request.priority() == null ? DEFAULT_PRIORITY : request.priority();
@@ -62,6 +79,7 @@ public class TaskService {
             throw new BusinessException(HttpStatus.NOT_FOUND, "SCENARIO_NOT_FOUND", "场景不存在");
         }
 
+        // 提交时复制一份场景快照，之后即使原场景被修改，历史任务仍可复现当时输入。
         ScenarioSnapshot snapshot = new ScenarioSnapshot(
                 scenario.getName(),
                 scenario.getDescription(),
@@ -85,6 +103,7 @@ public class TaskService {
         try {
             taskMapper.insert(task);
         } catch (DuplicateKeyException exception) {
+            // 两个并发请求可能同时通过前置查询；数据库唯一键负责最终去重。
             ExperimentTask concurrent = taskMapper.findByCreatorAndIdempotencyKey(creatorId, idempotencyKey);
             if (concurrent != null) {
                 return sameRequestOrThrow(concurrent, requestHash);
@@ -94,10 +113,15 @@ public class TaskService {
         return get(creatorId, task.getId());
     }
 
+    // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
+
     @Transactional(readOnly = true)
+    /** 方法说明：`get`封装下面这段业务或转换逻辑。 */
     public TaskResponse get(Long creatorId, Long taskId) {
         return toResponse(requireOwned(creatorId, taskId));
     }
+
+    // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
 
     @Transactional(readOnly = true)
     public PageResponse<TaskResponse> list(
@@ -116,7 +140,10 @@ public class TaskService {
         return PageResponse.of(content, page, size, total);
     }
 
+    // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
+
     @Transactional
+    /** 按状态机和 lockVersion 协作取消任务；运行中的 Worker 会在步骤边界检测到取消。 */
     public TaskResponse cancel(Long creatorId, Long taskId, TaskActionRequest request) {
         ExperimentTask task = requireOwned(creatorId, taskId);
         requireCurrentVersion(task, request.version());
@@ -129,7 +156,10 @@ public class TaskService {
         return get(creatorId, taskId);
     }
 
+    // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
+
     @Transactional
+    /** 把未超过次数上限的 FAILED 任务重新置为 QUEUED，保留原快照和参数。 */
     public TaskResponse retry(Long creatorId, Long taskId, TaskActionRequest request) {
         ExperimentTask task = requireOwned(creatorId, taskId);
         requireCurrentVersion(task, request.version());
@@ -149,6 +179,7 @@ public class TaskService {
         return get(creatorId, taskId);
     }
 
+    /** 比较请求摘要，区分“同一请求重放”和“错误复用幂等键”。 */
     private TaskResponse sameRequestOrThrow(ExperimentTask existing, String requestHash) {
         if (!Objects.equals(existing.getRequestHash(), requestHash)) {
             throw new BusinessException(
@@ -160,6 +191,7 @@ public class TaskService {
         return toResponse(existing);
     }
 
+    /** 方法说明：`requireOwned`封装下面这段业务或转换逻辑。 */
     private ExperimentTask requireOwned(Long creatorId, Long taskId) {
         ExperimentTask task = taskMapper.findOwnedById(taskId, creatorId);
         if (task == null) {
@@ -168,12 +200,14 @@ public class TaskService {
         return task;
     }
 
+    /** 方法说明：`requireCurrentVersion`封装下面这段业务或转换逻辑。 */
     private void requireCurrentVersion(ExperimentTask task, Integer requestedVersion) {
         if (!Objects.equals(task.getLockVersion(), requestedVersion)) {
             throw versionConflict();
         }
     }
 
+    /** 方法说明：`versionConflict`封装下面这段业务或转换逻辑。 */
     private BusinessException versionConflict() {
         return new BusinessException(
                 HttpStatus.CONFLICT,
@@ -182,10 +216,12 @@ public class TaskService {
         );
     }
 
+    /** 方法说明：`statusConflict`封装下面这段业务或转换逻辑。 */
     private BusinessException statusConflict(String message) {
         return new BusinessException(HttpStatus.CONFLICT, "TASK_STATUS_CONFLICT", message);
     }
 
+    /** 方法说明：`normalizeIdempotencyKey`封装下面这段业务或转换逻辑。 */
     private String normalizeIdempotencyKey(String rawIdempotencyKey) {
         if (rawIdempotencyKey == null || rawIdempotencyKey.isBlank()) {
             throw new BusinessException(
@@ -205,6 +241,7 @@ public class TaskService {
         return key;
     }
 
+    /** 将影响执行结果的字段按固定顺序规范化，再生成 SHA-256 请求摘要。 */
     private String requestHash(CreateTaskRequest request, int priority) {
         TrainingConfigRequest config = request.trainingConfig();
         String canonical = String.join(
@@ -227,10 +264,12 @@ public class TaskService {
         }
     }
 
+    /** 让 0.10 与 0.1 得到相同文本，避免等价请求产生不同摘要。 */
     private String normalizeDecimal(BigDecimal value) {
         return value.stripTrailingZeros().toPlainString();
     }
 
+    /** 方法说明：`toResponse`封装下面这段业务或转换逻辑。 */
     private TaskResponse toResponse(ExperimentTask task) {
         return new TaskResponse(
                 task.getId(),
@@ -254,6 +293,7 @@ public class TaskService {
         );
     }
 
+    /** 方法说明：`writeJson`封装下面这段业务或转换逻辑。 */
     private String writeJson(Object value, String message) {
         try {
             return objectMapper.writeValueAsString(value);
@@ -262,6 +302,7 @@ public class TaskService {
         }
     }
 
+    /** 方法说明：`readJson`封装下面这段业务或转换逻辑。 */
     private <T> T readJson(String json, Class<T> type, String message) {
         try {
             return objectMapper.readValue(json, type);

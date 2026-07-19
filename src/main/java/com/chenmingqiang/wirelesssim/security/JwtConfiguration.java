@@ -17,12 +17,22 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.util.StringUtils;
 
+// Spring说明：声明配置类，Spring启动时会读取其中的Bean定义。
+
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(JwtProperties.class)
+/**
+ * 教学注释：本文件为 JwtConfiguration.java。
+ * 请结合类、字段、方法旁的中文说明理解它在分层架构中的职责。
+ */
 public class JwtConfiguration {
 
+    /** 字段说明：`log`保存该对象运行所需的依赖、配置或状态。 */
     private static final Logger log = LoggerFactory.getLogger(JwtConfiguration.class);
+    /** 字段说明：`HS256_MINIMUM_KEY_BYTES`保存该对象运行所需的依赖、配置或状态。 */
     private static final int HS256_MINIMUM_KEY_BYTES = 32;
+
+    // Spring说明：把方法返回的对象注册为Spring Bean。
 
     @Bean
     SecretKey jwtSecretKey(JwtProperties properties) {
@@ -44,12 +54,16 @@ public class JwtConfiguration {
         return new SecretKeySpec(keyBytes, "HmacSHA256");
     }
 
+    // Spring说明：把方法返回的对象注册为Spring Bean。
+
     @Bean
     JwtEncoder jwtEncoder(SecretKey secretKey) {
         return NimbusJwtEncoder.withSecretKey(secretKey)
                 .algorithm(MacAlgorithm.HS256)
                 .build();
     }
+
+    // Spring说明：把方法返回的对象注册为Spring Bean。
 
     @Bean
     JwtDecoder jwtDecoder(SecretKey secretKey, JwtProperties properties) {

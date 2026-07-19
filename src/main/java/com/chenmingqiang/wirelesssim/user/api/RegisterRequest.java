@@ -4,6 +4,10 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
+/**
+ * 教学注释：本文件为 api/RegisterRequest.java。
+ * 请结合类、字段、方法旁的中文说明理解它在分层架构中的职责。
+ */
 public record RegisterRequest(
         @NotBlank(message = "用户名不能为空")
         @Pattern(regexp = "[A-Za-z0-9_]{4,32}", message = "用户名只能包含字母、数字和下划线，长度为4到32位")
