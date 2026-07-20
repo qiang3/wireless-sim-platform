@@ -3,6 +3,7 @@ package com.chenmingqiang.wirelesssim.task.application;
 import com.chenmingqiang.wirelesssim.task.domain.ExperimentTask;
 import com.chenmingqiang.wirelesssim.task.domain.TaskStatus;
 import com.chenmingqiang.wirelesssim.task.infrastructure.TaskMapper;
+import com.chenmingqiang.wirelesssim.task.infrastructure.redis.TaskCacheInvalidationService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -12,10 +13,16 @@ public class TaskMessagePreparationService {
 
     /** 读取任务并执行PENDING到QUEUED的条件更新。 */
     private final TaskMapper taskMapper;
+    /** 首次消息推动任务入队后删除旧详情缓存。 */
+    private final TaskCacheInvalidationService cacheInvalidationService;
 
     /** Spring通过构造器注入MyBatis Mapper。 */
-    public TaskMessagePreparationService(TaskMapper taskMapper) {
+    public TaskMessagePreparationService(
+            TaskMapper taskMapper,
+            TaskCacheInvalidationService cacheInvalidationService
+    ) {
         this.taskMapper = taskMapper;
+        this.cacheInvalidationService = cacheInvalidationService;
     }
 
     /**
@@ -40,6 +47,7 @@ public class TaskMessagePreparationService {
 
         if (task.getStatus() == TaskStatus.PENDING) {
             if (taskMapper.enqueuePending(taskId) == 1) {
+                cacheInvalidationService.evictAfterCommit(task.getCreatorId(), taskId);
                 return result(TaskMessagePreparationOutcome.READY_TO_EXECUTE, "首次任务已从PENDING进入QUEUED");
             }
             // 状态可能刚被取消或被另一消费者推进，重新读取后再作最终判断。

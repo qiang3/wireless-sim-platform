@@ -1,6 +1,7 @@
 package com.chenmingqiang.wirelesssim.task.application;
 
 import com.chenmingqiang.wirelesssim.task.infrastructure.TaskMapper;
+import com.chenmingqiang.wirelesssim.task.infrastructure.redis.TaskCacheInvalidationService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -13,10 +14,16 @@ public class TaskMessageFailureService {
 
     /** 执行带状态和轮次条件的任务更新。 */
     private final TaskMapper taskMapper;
+    /** 重试耗尽状态提交后删除任务详情缓存。 */
+    private final TaskCacheInvalidationService cacheInvalidationService;
 
     /** 通过构造器注入任务Mapper。 */
-    public TaskMessageFailureService(TaskMapper taskMapper) {
+    public TaskMessageFailureService(
+            TaskMapper taskMapper,
+            TaskCacheInvalidationService cacheInvalidationService
+    ) {
         this.taskMapper = taskMapper;
+        this.cacheInvalidationService = cacheInvalidationService;
     }
 
     /**
@@ -32,7 +39,11 @@ public class TaskMessageFailureService {
         if (message.length() > MAX_ERROR_LENGTH) {
             message = message.substring(0, MAX_ERROR_LENGTH);
         }
-        return taskMapper.markMessageDeliveryExhausted(taskId, attemptNo - 1, message) == 1;
+        boolean updated = taskMapper.markMessageDeliveryExhausted(taskId, attemptNo - 1, message) == 1;
+        if (updated) {
+            cacheInvalidationService.evictTaskAfterCommit(taskId);
+        }
+        return updated;
     }
 
     /** 空白原因使用稳定说明。 */

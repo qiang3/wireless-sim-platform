@@ -183,6 +183,13 @@
         LIMIT 1
     </select>
 
+    <select id="findCreatorIdById" resultType="long">
+        SELECT creator_id
+        FROM experiment_task
+        WHERE id = #{id}
+        LIMIT 1
+    </select>
+
     <update id="updateRunningProgress">
         UPDATE experiment_task
         SET progress = #{progress}

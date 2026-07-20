@@ -6,6 +6,7 @@ import com.chenmingqiang.wirelesssim.task.domain.ExperimentTask;
 import com.chenmingqiang.wirelesssim.task.domain.TaskStatus;
 import com.chenmingqiang.wirelesssim.task.infrastructure.TaskExecutionMapper;
 import com.chenmingqiang.wirelesssim.task.infrastructure.TaskMapper;
+import com.chenmingqiang.wirelesssim.task.infrastructure.redis.TaskCacheInvalidationService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.core.JacksonException;
@@ -25,15 +26,19 @@ public class TaskExecutionRuntimeService {
     private final TaskExecutionMapper executionMapper;
     /** 字段说明：`objectMapper`保存该对象运行所需的依赖、配置或状态。 */
     private final ObjectMapper objectMapper;
+    /** 进度与心跳提交后删除旧详情缓存。 */
+    private final TaskCacheInvalidationService cacheInvalidationService;
 
     public TaskExecutionRuntimeService(
             TaskMapper taskMapper,
             TaskExecutionMapper executionMapper,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            TaskCacheInvalidationService cacheInvalidationService
     ) {
         this.taskMapper = taskMapper;
         this.executionMapper = executionMapper;
         this.objectMapper = objectMapper;
+        this.cacheInvalidationService = cacheInvalidationService;
     }
 
     // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
@@ -81,6 +86,7 @@ public class TaskExecutionRuntimeService {
         if (executionMapper.touchHeartbeat(executionId) == 0) {
             throw new IllegalStateException("执行记录已不处于RUNNING状态：" + executionId);
         }
+        cacheInvalidationService.evictTaskAfterCommit(taskId);
         return true;
     }
 

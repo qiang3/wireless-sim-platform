@@ -39,6 +39,13 @@ spring:
         missing-queues-fatal: true
         retry:
           enabled: false
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:16379}
+      password: ${REDIS_PASSWORD:wireless_dev}
+      connect-timeout: ${REDIS_CONNECT_TIMEOUT:2s}
+      timeout: ${REDIS_COMMAND_TIMEOUT:2s}
 
 mybatis:
   mapper-locations: classpath:mapper/**/*.xml
@@ -54,6 +61,12 @@ app:
       secret-base64: ${JWT_SECRET_BASE64:}
 
 simulation:
+  redis:
+    enabled: ${SIMULATION_REDIS_ENABLED:true}
+    task-detail-ttl: ${SIMULATION_REDIS_TASK_DETAIL_TTL:5s}
+    rate-limit:
+      window: ${SIMULATION_REDIS_RATE_LIMIT_WINDOW:60s}
+      max-submissions: ${SIMULATION_REDIS_RATE_LIMIT_MAX_SUBMISSIONS:5}
   outbox:
     enabled: ${SIMULATION_OUTBOX_ENABLED:true}
     scan-interval: ${SIMULATION_OUTBOX_SCAN_INTERVAL:1s}

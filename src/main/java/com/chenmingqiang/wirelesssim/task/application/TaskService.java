@@ -15,6 +15,9 @@ import com.chenmingqiang.wirelesssim.task.domain.TaskAlgorithm;
 import com.chenmingqiang.wirelesssim.task.domain.TaskStatus;
 import com.chenmingqiang.wirelesssim.task.infrastructure.OutboxEventMapper;
 import com.chenmingqiang.wirelesssim.task.infrastructure.TaskMapper;
+import com.chenmingqiang.wirelesssim.task.infrastructure.redis.TaskCacheInvalidationService;
+import com.chenmingqiang.wirelesssim.task.infrastructure.redis.TaskDetailCache;
+import com.chenmingqiang.wirelesssim.task.infrastructure.redis.TaskSubmissionRateLimiter;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -54,6 +57,12 @@ public class TaskService {
     private final OutboxEventMapper outboxEventMapper;
     /** 统一生成版本化任务执行请求事件。 */
     private final TaskOutboxEventFactory outboxEventFactory;
+    /** 任务详情的Cache Aside缓存。 */
+    private final TaskDetailCache taskDetailCache;
+    /** 保证缓存只在MySQL事务提交成功后失效。 */
+    private final TaskCacheInvalidationService cacheInvalidationService;
+    /** 控制单个用户短时间创建的新任务数量。 */
+    private final TaskSubmissionRateLimiter submissionRateLimiter;
 
     /** 通过构造方法注入任务、场景、Outbox和JSON依赖。 */
     public TaskService(
@@ -61,13 +70,19 @@ public class TaskService {
             ScenarioMapper scenarioMapper,
             ObjectMapper objectMapper,
             OutboxEventMapper outboxEventMapper,
-            TaskOutboxEventFactory outboxEventFactory
+            TaskOutboxEventFactory outboxEventFactory,
+            TaskDetailCache taskDetailCache,
+            TaskCacheInvalidationService cacheInvalidationService,
+            TaskSubmissionRateLimiter submissionRateLimiter
     ) {
         this.taskMapper = taskMapper;
         this.scenarioMapper = scenarioMapper;
         this.objectMapper = objectMapper;
         this.outboxEventMapper = outboxEventMapper;
         this.outboxEventFactory = outboxEventFactory;
+        this.taskDetailCache = taskDetailCache;
+        this.cacheInvalidationService = cacheInvalidationService;
+        this.submissionRateLimiter = submissionRateLimiter;
     }
 
     // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
@@ -91,6 +106,9 @@ public class TaskService {
         if (scenario == null) {
             throw new BusinessException(HttpStatus.NOT_FOUND, "SCENARIO_NOT_FOUND", "场景不存在");
         }
+
+        // 幂等重放和无效场景已经在上方返回；只有真正准备创建新任务时才消耗限流额度。
+        submissionRateLimiter.acquireOrThrow(creatorId);
 
         // 提交时复制一份场景快照，之后即使原场景被修改，历史任务仍可复现当时输入。
         ScenarioSnapshot snapshot = new ScenarioSnapshot(
@@ -125,7 +143,7 @@ public class TaskService {
         }
         // 任务和事件位于同一个@Transactional事务：任意一次插入失败都会一起回滚。
         insertExecutionRequestedEvent(task, 1);
-        return get(creatorId, task.getId());
+        return toResponse(requireOwned(creatorId, task.getId()));
     }
 
     // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
@@ -133,7 +151,11 @@ public class TaskService {
     @Transactional(readOnly = true)
     /** 方法说明：`get`封装下面这段业务或转换逻辑。 */
     public TaskResponse get(Long creatorId, Long taskId) {
-        return toResponse(requireOwned(creatorId, taskId));
+        return taskDetailCache.get(creatorId, taskId).orElseGet(() -> {
+            TaskResponse response = toResponse(requireOwned(creatorId, taskId));
+            taskDetailCache.put(creatorId, taskId, response);
+            return response;
+        });
     }
 
     // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
@@ -168,7 +190,8 @@ public class TaskService {
         if (taskMapper.cancelOwnedWithVersion(taskId, creatorId, request.version()) == 0) {
             throw versionConflict();
         }
-        return get(creatorId, taskId);
+        cacheInvalidationService.evictAfterCommit(creatorId, taskId);
+        return toResponse(requireOwned(creatorId, taskId));
     }
 
     // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
@@ -194,6 +217,7 @@ public class TaskService {
         // 重新读取更新后的retry_count和priority，确保事件尝试号来自数据库最终状态。
         ExperimentTask retried = requireOwned(creatorId, taskId);
         insertExecutionRequestedEvent(retried, retried.getRetryCount() + 1);
+        cacheInvalidationService.evictAfterCommit(creatorId, taskId);
         return toResponse(retried);
     }
 

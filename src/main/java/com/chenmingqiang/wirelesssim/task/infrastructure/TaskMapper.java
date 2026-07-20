@@ -69,6 +69,9 @@ public interface TaskMapper {
 
     TaskStatus findStatusById(@Param("id") Long id);
 
+    /** 缓存失效链路在只有任务ID时查询任务所有者。 */
+    Long findCreatorIdById(@Param("id") Long id);
+
     int updateRunningProgress(
             @Param("id") Long id,
             @Param("progress") int progress

@@ -5,6 +5,7 @@ import com.chenmingqiang.wirelesssim.task.domain.ExecutionStatus;
 import com.chenmingqiang.wirelesssim.task.domain.TaskExecution;
 import com.chenmingqiang.wirelesssim.task.infrastructure.TaskExecutionMapper;
 import com.chenmingqiang.wirelesssim.task.infrastructure.TaskMapper;
+import com.chenmingqiang.wirelesssim.task.infrastructure.redis.TaskCacheInvalidationService;
 import java.util.Optional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,11 +25,18 @@ public class TaskExecutionClaimService {
     private final TaskMapper taskMapper;
     /** 字段说明：`executionMapper`保存该对象运行所需的依赖、配置或状态。 */
     private final TaskExecutionMapper executionMapper;
+    /** 抢占状态提交后删除旧的任务详情缓存。 */
+    private final TaskCacheInvalidationService cacheInvalidationService;
 
     /** 方法说明：`TaskExecutionClaimService`封装下面这段业务或转换逻辑。 */
-    public TaskExecutionClaimService(TaskMapper taskMapper, TaskExecutionMapper executionMapper) {
+    public TaskExecutionClaimService(
+            TaskMapper taskMapper,
+            TaskExecutionMapper executionMapper,
+            TaskCacheInvalidationService cacheInvalidationService
+    ) {
         this.taskMapper = taskMapper;
         this.executionMapper = executionMapper;
+        this.cacheInvalidationService = cacheInvalidationService;
     }
 
     // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
@@ -36,7 +44,11 @@ public class TaskExecutionClaimService {
     @Transactional
     /** 原子地把 PENDING 任务变为 QUEUED；已被其他调度器处理时返回 false。 */
     public boolean enqueuePendingTask(long taskId) {
-        return taskMapper.enqueuePending(taskId) == 1;
+        boolean enqueued = taskMapper.enqueuePending(taskId) == 1;
+        if (enqueued) {
+            cacheInvalidationService.evictTaskAfterCommit(taskId);
+        }
+        return enqueued;
     }
 
     // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
@@ -71,6 +83,7 @@ public class TaskExecutionClaimService {
         if (saved == null) {
             throw new IllegalStateException("执行记录保存后无法读取：taskId=" + taskId);
         }
+        cacheInvalidationService.evictTaskAfterCommit(taskId);
         return Optional.of(saved);
     }
 
@@ -103,6 +116,7 @@ public class TaskExecutionClaimService {
                     "严格抢占后无法读取执行记录：taskId=" + taskId + ", attemptNo=" + attemptNo
             );
         }
+        cacheInvalidationService.evictTaskAfterCommit(taskId);
         return Optional.of(saved);
     }
 

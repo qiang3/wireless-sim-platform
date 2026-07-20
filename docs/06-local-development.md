@@ -48,7 +48,30 @@ AMQP地址：localhost:5672
 
 RabbitMQ使用Docker命名卷`wireless-sim-platform_wireless-sim-rabbitmq-data`保存持久化数据。当前Docker Desktop的自定义数据目录为`D:\WSL\DockerDesktopWSL`，主要镜像、容器层和命名卷都位于其中的`disk\docker_data.vhdx`虚拟磁盘内，而不是直接保存到项目源码目录。
 
-## 4. 启动Java应用
+## 4. 启动Redis
+
+```powershell
+docker compose up -d redis
+docker compose ps redis
+```
+
+本地连接信息：
+
+```text
+地址：localhost
+端口：16379
+密码：wireless_dev
+```
+
+Redis使用`redis:7.4.2-alpine`，只保存5秒任务详情缓存和60秒限流计数。项目明确关闭RDB和AOF，不创建Docker命名卷；容器重建后数据丢失不会影响业务正确性，MySQL仍是任务事实来源。
+
+手动连接：
+
+```powershell
+docker compose exec redis redis-cli -a wireless_dev --no-auth-warning
+```
+
+## 5. 启动Java应用
 
 项目使用完整的Oracle JDK 17.0.12。在IntelliJ中运行`WirelessSimApplication`，或在已经配置Java 17的终端中执行：
 
@@ -60,7 +83,7 @@ mvn -s .mvn/settings.xml spring-boot:run
 
 本地未配置`JWT_SECRET_BASE64`时，应用会生成一次性随机开发密钥，应用重启后旧Token会失效。部署环境必须通过环境变量提供固定的Base64密钥，不能把真实密钥提交到代码仓库。
 
-## 5. 运行测试
+## 6. 运行测试
 
 日常单元测试：
 
@@ -74,17 +97,17 @@ mvn -s .mvn/settings.xml test
 mvn -s .mvn/settings.xml -Dtest=DatabaseMigrationIT test
 ```
 
-现有数据库集成测试要求MySQL容器处于健康状态；阶段8增加的消息集成测试还会要求RabbitMQ容器健康。
+现有数据库集成测试要求MySQL容器处于健康状态；消息集成测试要求RabbitMQ健康；Redis专项集成测试要求Redis健康。普通测试在`src/test/resources/application.properties`中默认关闭Redis功能，专项测试会显式启用。
 
-## 6. 停止环境
+## 7. 停止环境
 
 ```powershell
-docker compose stop mysql rabbitmq
+docker compose stop mysql rabbitmq redis
 ```
 
 该命令只停止容器，不删除数据库数据卷。不要随意执行带`-v`的删除命令。
 
-## 7. 查看和人工处理最终死信
+## 8. 查看和人工处理最终死信
 
 查看三个队列的待处理与未确认消息数：
 

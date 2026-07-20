@@ -7,6 +7,7 @@ import com.chenmingqiang.wirelesssim.task.domain.TaskStatus;
 import com.chenmingqiang.wirelesssim.task.infrastructure.SimulationResultMapper;
 import com.chenmingqiang.wirelesssim.task.infrastructure.TaskExecutionMapper;
 import com.chenmingqiang.wirelesssim.task.infrastructure.TaskMapper;
+import com.chenmingqiang.wirelesssim.task.infrastructure.redis.TaskCacheInvalidationService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.core.JacksonException;
@@ -32,17 +33,21 @@ public class TaskExecutionLifecycleService {
     private final SimulationResultMapper resultMapper;
     /** 字段说明：`objectMapper`保存该对象运行所需的依赖、配置或状态。 */
     private final ObjectMapper objectMapper;
+    /** 终态事务提交后删除旧详情缓存。 */
+    private final TaskCacheInvalidationService cacheInvalidationService;
 
     public TaskExecutionLifecycleService(
             TaskMapper taskMapper,
             TaskExecutionMapper executionMapper,
             SimulationResultMapper resultMapper,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            TaskCacheInvalidationService cacheInvalidationService
     ) {
         this.taskMapper = taskMapper;
         this.executionMapper = executionMapper;
         this.resultMapper = resultMapper;
         this.objectMapper = objectMapper;
+        this.cacheInvalidationService = cacheInvalidationService;
     }
 
     // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
@@ -74,6 +79,7 @@ public class TaskExecutionLifecycleService {
         result.setMetricsJson(writeJson(metrics));
         result.setArtifactPath(null);
         resultMapper.insert(result);
+        cacheInvalidationService.evictTaskAfterCommit(taskId);
         return true;
     }
 
@@ -98,6 +104,7 @@ public class TaskExecutionLifecycleService {
         if (executionMapper.markFailed(executionId, errorMessage) == 0) {
             throw new IllegalStateException("执行记录无法标记失败：" + executionId);
         }
+        cacheInvalidationService.evictTaskAfterCommit(taskId);
     }
 
     // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。
@@ -122,6 +129,7 @@ public class TaskExecutionLifecycleService {
         if (taskMapper.markFailed(taskId, HEARTBEAT_TIMEOUT_ERROR) == 0) {
             throw new IllegalStateException("超时执行对应任务已不处于RUNNING状态：" + taskId);
         }
+        cacheInvalidationService.evictTaskAfterCommit(taskId);
         return true;
     }
 

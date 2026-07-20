@@ -42,6 +42,29 @@ services:
       retries: 20
       start_period: 20s
 
+  redis:
+    image: redis:7.4.2-alpine
+    container_name: wireless-sim-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --requirepass
+      - wireless_dev
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "16379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "wireless_dev", "--no-auth-warning", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
 volumes:
   wireless-sim-mysql-data:
   wireless-sim-rabbitmq-data:

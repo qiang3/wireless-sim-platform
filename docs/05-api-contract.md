@@ -157,6 +157,9 @@
 - 创建时保存场景名称、描述、优化目标、配置和版本快照；
 - 新请求与同键同参数重放均返回202和同一任务；
 - 同一用户使用相同键提交不同参数，返回409和`IDEMPOTENCY_KEY_REUSED`。
+- 相同幂等键和相同参数的重放不消耗新的提交限流额度；
+- 每个用户60秒内最多创建5个新任务，第6个新任务返回429；
+- Redis不可用时限流采用Fail Open，数据库幂等和唯一约束仍然生效。
 
 ### 4.2 分页查询
 
@@ -194,6 +197,7 @@ GET /api/v1/tasks?page=0&size=20&status=PENDING&algorithm=GRPO
 | 409 | `TASK_STATUS_CONFLICT` | 当前状态不允许取消或重试 |
 | 409 | `TASK_VERSION_CONFLICT` | 并发状态更新发生版本冲突 |
 | 409 | `TASK_RETRY_LIMIT_EXCEEDED` | 已达到最大重试次数 |
+| 429 | `TASK_SUBMISSION_RATE_LIMITED` | 单个用户60秒内创建的新任务超过5个 |
 
 ## 5. 实验结果
 

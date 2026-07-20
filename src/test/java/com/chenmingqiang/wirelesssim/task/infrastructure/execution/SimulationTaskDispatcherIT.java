@@ -52,6 +52,9 @@ class SimulationTaskDispatcherIT {
         if (userId == null) {
             return;
         }
+        // 人工重试会创建Outbox事件，必须在删除任务前按聚合ID清理。
+        jdbcTemplate.update("DELETE FROM outbox_event WHERE aggregate_type='EXPERIMENT_TASK' "
+                + "AND aggregate_id IN (SELECT id FROM experiment_task WHERE creator_id = ?)", userId);
         jdbcTemplate.update("DELETE FROM simulation_result WHERE task_id IN "
                 + "(SELECT id FROM experiment_task WHERE creator_id = ?)", userId);
         jdbcTemplate.update("DELETE FROM task_execution WHERE task_id IN "
