@@ -223,3 +223,12 @@ GET /api/v1/tasks?page=0&size=20&status=PENDING&algorithm=GRPO
 ```
 
 任务结果尚未产生、任务不存在或任务不属于当前用户时，统一返回404和`TASK_RESULT_NOT_FOUND`，避免通过响应差异枚举他人任务。
+
+## 6. 阶段8异步可靠性语义
+
+- `POST /tasks`返回202表示任务与待发布Outbox事件已经在MySQL同一事务中受理，不表示仿真已经完成；
+- 客户端通过`GET /tasks/{id}`观察`PENDING -> QUEUED -> RUNNING -> SUCCEEDED/FAILED/CANCELLED`，不直接依赖RabbitMQ状态；
+- RabbitMQ采用至少一次投递，重复消息由任务状态、执行尝试号和数据库唯一约束吸收；
+- 任务详情可能命中5秒Redis缓存，任何状态写操作均在MySQL事务提交后删除缓存；缓存丢失或Redis重启不会丢失任务；
+- Redis不可用时查询回源MySQL、提交限流Fail Open，因此核心API仍可工作；
+- 自动消息重试耗尽后，待执行任务会进入`FAILED`，最终死信保留在RabbitMQ供人工诊断；用户发起新的业务重试仍通过`POST /tasks/{id}/retry`。

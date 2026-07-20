@@ -14,6 +14,7 @@ import com.chenmingqiang.wirelesssim.task.application.TaskService;
 import com.chenmingqiang.wirelesssim.task.domain.TaskAlgorithm;
 import com.chenmingqiang.wirelesssim.task.domain.TaskStatus;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -145,6 +146,32 @@ class TaskRedisFlowIT {
                 Integer.class,
                 fixture.userId()
         )).isEqualTo(5);
+    }
+
+    /**
+     * 人为写入无法反序列化的缓存值，验证缓存适配器会删除脏数据、回源MySQL并重建正确缓存。
+     * 该测试模拟序列化格式升级、人工误操作等导致的缓存污染，证明Redis损坏不会污染事实数据。
+     */
+    @Test
+    void corruptedTaskCacheIsDeletedAndRebuiltFromMySql() throws Exception {
+        Fixture fixture = createFixture();
+        TaskResponse submitted = taskService.submit(
+                fixture.userId(),
+                "redis-corrupted-cache",
+                taskRequest(fixture.scenarioId())
+        );
+        String cacheKey = taskDetailCache.key(fixture.userId(), submitted.id());
+        redisTemplate.opsForValue().set(cacheKey, "{broken-json", Duration.ofSeconds(5));
+
+        TaskResponse recovered = taskService.get(fixture.userId(), submitted.id());
+
+        assertThat(recovered.id()).isEqualTo(submitted.id());
+        assertThat(recovered.status()).isEqualTo(TaskStatus.PENDING);
+        assertThat(redisTemplate.opsForValue().get(cacheKey))
+                .isNotNull()
+                .isNotEqualTo("{broken-json");
+        assertThat(taskDetailCache.get(fixture.userId(), submitted.id()))
+                .hasValueSatisfying(cached -> assertThat(cached.id()).isEqualTo(submitted.id()));
     }
 
     /** 创建最小合法用户和无线通信场景，供任务服务集成测试使用。 */

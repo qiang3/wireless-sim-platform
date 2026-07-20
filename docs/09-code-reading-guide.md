@@ -21,6 +21,9 @@ HTTP请求
 4. `SimulationTaskDispatcher -> SimulationTaskWorker`：理解轮询、线程池和异步执行；
 5. `TaskExecutionClaimService -> TaskExecutionRuntimeService -> TaskExecutionLifecycleService`：理解抢占、心跳和状态闭环；
 6. `JavaMockSimulationEngine -> SimulationResultMapper`：理解合成结果和结果落库。
+7. `TaskService -> OutboxEventMapper -> OutboxPublisherScheduler`：理解任务与事件同事务、异步可靠发布和失败退避；
+8. `TaskExecutionMessageListener -> TaskMessagePreparationService -> SimulationTaskWorker`：理解手动ACK、消息幂等、尝试号和执行闭环；
+9. `TaskDetailCache -> TaskCacheInvalidationService -> TaskSubmissionRateLimiter`：理解Cache Aside、提交后失效、故障降级和Lua原子限流。
 
 ## 2. 四层目录分别解决什么问题
 
@@ -59,6 +62,26 @@ HTTP请求
 
 观察：`PENDING -> QUEUED -> RUNNING -> SUCCEEDED`状态变化、线程名、执行记录、心跳和结果表。
 
+### RabbitMQ可靠消息链路
+
+- `TaskService.createOutboxEvent`
+- `OutboxClaimService.claimBatch`
+- `OutboxMessagePublisher.publish`
+- `OutboxPublishResultService.recordResult`
+- `TaskExecutionMessageListener.onMessage`
+- `TaskMessageForwarder.forwardToRetry/forwardToDeadLetter`
+
+观察：任务与Outbox是否同事务提交、`PENDING -> SENDING -> PUBLISHED`、Confirm与Return结果、`deliveryTag`、`attemptNo`、ACK时机和重复消息分类。
+
+### Redis缓存与限流链路
+
+- `TaskService.get`
+- `TaskDetailCache.get/put/evict`
+- `TaskCacheInvalidationService.evictAfterCommit`
+- `TaskSubmissionRateLimiter.acquireOrThrow`
+
+观察：缓存键中的用户隔离、5秒TTL、脏JSON自愈、事务提交后回调，以及Lua返回的当前窗口计数。
+
 ## 4. 必须能解释的核心问题
 
 1. JWT为什么适合无状态API，签名与加密有什么区别？
@@ -72,6 +95,10 @@ HTTP请求
 9. 运行中取消为什么采用协作式取消？
 10. Worker宕机后，心跳超时恢复如何避免误判？
 11. 为什么`JAVA_MOCK`结果不能当作GRPO/PPO科研结论？
+12. Transactional Outbox解决了哪一个“双写”问题？
+13. 为什么RabbitMQ至少一次投递必须配合数据库业务幂等？
+14. Publisher Confirm ACK为什么仍要检查Return？
+15. 为什么Redis不可用不能阻断任务查询和提交？
 
 这些问题的详细回答继续保存在`docs/03-learning-log.md`。
 

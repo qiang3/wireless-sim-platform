@@ -10,10 +10,14 @@ import com.chenmingqiang.wirelesssim.scenario.api.ScenarioConfigRequest;
 import com.chenmingqiang.wirelesssim.scenario.domain.AccessScheme;
 import com.chenmingqiang.wirelesssim.task.api.CreateTaskRequest;
 import com.chenmingqiang.wirelesssim.task.api.TaskActionRequest;
+import com.chenmingqiang.wirelesssim.task.api.TaskResponse;
 import com.chenmingqiang.wirelesssim.task.api.TrainingConfigRequest;
 import com.chenmingqiang.wirelesssim.task.domain.OutboxEvent;
 import com.chenmingqiang.wirelesssim.task.domain.TaskAlgorithm;
+import com.chenmingqiang.wirelesssim.task.domain.TaskStatus;
 import com.chenmingqiang.wirelesssim.task.infrastructure.OutboxEventMapper;
+import com.chenmingqiang.wirelesssim.task.infrastructure.redis.TaskDetailCache;
+import com.chenmingqiang.wirelesssim.task.infrastructure.redis.TaskSubmissionRateLimiter;
 import java.math.BigDecimal;
 import java.util.Map;
 import java.util.UUID;
@@ -23,6 +27,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import tools.jackson.core.JacksonException;
@@ -34,7 +39,10 @@ import tools.jackson.databind.ObjectMapper;
  * <p>测试只把OutboxEventMapper替换成会主动失败的Mock。这样可以精确模拟
  * “前面的任务SQL已经执行，但后面的Outbox SQL失败”，再在事务结束后检查数据库是否回滚。</p>
  */
-@SpringBootTest(properties = "simulation.execution.enabled=false")
+@SpringBootTest(properties = {
+        "simulation.execution.enabled=false",
+        "simulation.redis.enabled=true"
+})
 class TaskOutboxTransactionIT {
 
     /** 被测试的真实任务应用服务，调用时会经过Spring事务代理。 */
@@ -46,6 +54,12 @@ class TaskOutboxTransactionIT {
     /** 用于生成合法的场景配置JSON。 */
     @Autowired
     private ObjectMapper objectMapper;
+    /** 验证事务提交后回调不会在回滚时错误删除任务缓存。 */
+    @Autowired
+    private TaskDetailCache taskDetailCache;
+    /** 检查并清理测试使用的真实Redis键。 */
+    @Autowired
+    private StringRedisTemplate redisTemplate;
 
     /**
      * 替换真实Outbox Mapper的测试Bean。
@@ -58,6 +72,8 @@ class TaskOutboxTransactionIT {
     private Long userId;
     /** 当前测试场景ID。 */
     private Long scenarioId;
+    /** 人工插入的失败任务ID，用于定向清理Redis缓存。 */
+    private Long failedTaskId;
 
     /** 每项测试前创建互相隔离的用户和合法场景。 */
     @BeforeEach
@@ -97,6 +113,10 @@ class TaskOutboxTransactionIT {
     void cleanUp() {
         if (userId == null) {
             return;
+        }
+        redisTemplate.delete(TaskSubmissionRateLimiter.KEY_PREFIX + userId);
+        if (failedTaskId != null) {
+            redisTemplate.delete(taskDetailCache.key(userId, failedTaskId));
         }
         jdbcTemplate.update("DELETE FROM outbox_event WHERE aggregate_type='EXPERIMENT_TASK' "
                 + "AND aggregate_id IN (SELECT id FROM experiment_task WHERE creator_id = ?)", userId);
@@ -139,6 +159,10 @@ class TaskOutboxTransactionIT {
     @Test
     void retryRollsBackTaskStateWhenOutboxInsertFails() {
         long taskId = insertFailedTask();
+        TaskResponse beforeRetry = taskService.get(userId, taskId);
+        String cacheKey = taskDetailCache.key(userId, taskId);
+        assertThat(beforeRetry.status()).isEqualTo(TaskStatus.FAILED);
+        assertThat(redisTemplate.opsForValue().get(cacheKey)).isNotNull();
 
         assertThatThrownBy(() -> taskService.retry(userId, taskId, new TaskActionRequest(0)))
                 .isInstanceOf(IllegalStateException.class)
@@ -158,6 +182,9 @@ class TaskOutboxTransactionIT {
                 Integer.class,
                 taskId
         )).isZero();
+        assertThat(redisTemplate.opsForValue().get(cacheKey)).isNotNull();
+        assertThat(taskDetailCache.get(userId, taskId))
+                .hasValueSatisfying(cached -> assertThat(cached.status()).isEqualTo(TaskStatus.FAILED));
     }
 
     /** 直接插入一条FAILED任务，作为人工重试回滚测试的前置状态。 */
@@ -171,8 +198,23 @@ class TaskOutboxTransactionIT {
                     retry_count, idempotency_key, request_hash,
                     error_message, lock_version, submitted_at, finished_at
                 ) VALUES (
-                    ?, ?, JSON_OBJECT('scenarioName', '事务回滚测试'), ?,
-                    'GRPO', JSON_OBJECT('randomSeed', 42), 5, 'FAILED',
+                    ?, ?, JSON_OBJECT(
+                        'scenarioName', '事务回滚测试',
+                        'description', '验证事务回滚时缓存保持原状态',
+                        'objective', 'THROUGHPUT',
+                        'config', JSON_OBJECT(
+                            'deviceCount', 3, 'antennaCount', 4, 'timeSlotCount', 10000,
+                            'dataArrivalRate', 2.5, 'averageGreenEnergy', 5.0,
+                            'batteryCapacity', 20.0, 'dataBufferCapacity', 1.5,
+                            'wptTransmitPower', 10.0, 'deviceMaxTransmitPower', 1.0,
+                            'accessScheme', 'RSMA', 'randomSeed', 20260719
+                        ),
+                        'version', 0
+                    ), ?,
+                    'GRPO', JSON_OBJECT(
+                        'maxTrainingSteps', 100000, 'learningRate', 0.0003,
+                        'batchSize', 64, 'discountFactor', 0.99, 'randomSeed', 20260719
+                    ), 5, 'FAILED',
                     0, ?, ?,
                     '原始执行失败', 0, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3)
                 )
@@ -183,11 +225,12 @@ class TaskOutboxTransactionIT {
                 "retry-rollback-" + suffix,
                 suffix + suffix
         );
-        return jdbcTemplate.queryForObject(
+        failedTaskId = jdbcTemplate.queryForObject(
                 "SELECT id FROM experiment_task WHERE task_no = ?",
                 Long.class,
                 taskNo
         );
+        return failedTaskId;
     }
 
     /** 返回能够被TaskService解析的完整无线通信场景配置。 */
