@@ -1,6 +1,7 @@
 package com.chenmingqiang.wirelesssim.task.application;
 
 import com.chenmingqiang.wirelesssim.task.domain.JavaMockSimulationResult;
+import com.chenmingqiang.wirelesssim.task.domain.GrpoInferenceResult;
 import com.chenmingqiang.wirelesssim.task.domain.SimulationMetrics;
 import com.chenmingqiang.wirelesssim.task.domain.SimulationResult;
 import com.chenmingqiang.wirelesssim.task.domain.TaskStatus;
@@ -81,6 +82,61 @@ public class TaskExecutionLifecycleService {
         resultMapper.insert(result);
         cacheInvalidationService.evictTaskAfterCommit(taskId);
         return true;
+    }
+
+    /**
+     * 保存Python预训练GRPO的真实评估结果。任务、执行记录和结果仍在同一MySQL事务内完成，
+     * 因此Python进程无需也不允许直接连接业务数据库。
+     */
+    @Transactional
+    public boolean completeGrpoInference(long taskId, long executionId, GrpoInferenceResult inferenceResult) {
+        if (taskMapper.markSucceeded(taskId) == 0) {
+            return false;
+        }
+        if (executionMapper.markSucceeded(executionId) == 0) {
+            throw new IllegalStateException("GRPO执行记录无法完成：" + executionId);
+        }
+
+        SimulationResult result = new SimulationResult();
+        result.setTaskId(taskId);
+        result.setThroughput(inferenceResult.throughputMean());
+        result.setAverageAoi(null);
+        result.setConvergenceStep(null);
+        result.setMetricsJson(writeJson(new GrpoMetrics(
+                "PRETRAINED_MODEL",
+                false,
+                inferenceResult.modelId(),
+                inferenceResult.checkpointSha256(),
+                inferenceResult.baseSeed(),
+                "Mbit/episode",
+                inferenceResult.throughputStd(),
+                inferenceResult.throughputMin(),
+                inferenceResult.throughputMax(),
+                inferenceResult.totalTimesteps(),
+                inferenceResult.totalEvaluationTimeSeconds(),
+                null
+        )));
+        result.setArtifactPath(inferenceResult.artifactPath());
+        resultMapper.insert(result);
+        cacheInvalidationService.evictTaskAfterCommit(taskId);
+        return true;
+    }
+
+    /** metrics_json中的结构化模型元数据；averageAoi保持null表示本模型未计算该指标。 */
+    private record GrpoMetrics(
+            String evaluationMode,
+            boolean trainingPerformed,
+            String modelId,
+            String checkpointSha256,
+            long baseSeed,
+            String throughputUnit,
+            java.math.BigDecimal throughputStd,
+            java.math.BigDecimal throughputMin,
+            java.math.BigDecimal throughputMax,
+            int totalTimesteps,
+            java.math.BigDecimal totalEvaluationTimeSeconds,
+            java.math.BigDecimal averageAoi
+    ) {
     }
 
     // 事务说明：方法由Spring事务代理执行；运行时异常会使本次数据库修改整体回滚。

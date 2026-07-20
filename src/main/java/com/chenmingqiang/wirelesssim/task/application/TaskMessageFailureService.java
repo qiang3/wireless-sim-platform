@@ -32,10 +32,20 @@ public class TaskMessageFailureService {
      */
     @Transactional
     public boolean markDeliveryExhausted(long taskId, int attemptNo, String lastError) {
+        return markWaitingTaskFailed(taskId, attemptNo, "消息处理重试耗尽：", lastError);
+    }
+
+    /** 永久不兼容任务无需重试，直接按相同状态和轮次条件关闭为FAILED。 */
+    @Transactional
+    public boolean markPermanentlyRejected(long taskId, int attemptNo, String reason) {
+        return markWaitingTaskFailed(taskId, attemptNo, "Python Worker永久拒绝：", reason);
+    }
+
+    private boolean markWaitingTaskFailed(long taskId, int attemptNo, String prefix, String rawError) {
         if (taskId <= 0 || attemptNo <= 0) {
             return false;
         }
-        String message = "消息处理重试耗尽：" + safe(lastError);
+        String message = prefix + safe(rawError);
         if (message.length() > MAX_ERROR_LENGTH) {
             message = message.substring(0, MAX_ERROR_LENGTH);
         }

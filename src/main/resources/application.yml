@@ -86,6 +86,11 @@ simulation:
     step-delay-ms: ${SIMULATION_STEP_DELAY_MS:200}
     recovery-scan-interval-ms: ${SIMULATION_RECOVERY_SCAN_INTERVAL_MS:10000}
     heartbeat-timeout-seconds: ${SIMULATION_HEARTBEAT_TIMEOUT_SECONDS:30}
+    worker-mode: ${SIMULATION_WORKER_MODE:java-mock}
+  worker-api:
+    token: ${SIMULATION_WORKER_TOKEN:}
+    model-id: ${SIMULATION_GRPO_MODEL_ID:grpo-rsma-throughput-v1}
+    evaluation-episodes: ${SIMULATION_GRPO_EVALUATION_EPISODES:10}
   messaging:
     consumer-enabled: ${SIMULATION_MESSAGE_CONSUMER_ENABLED:true}
     retry-delay: ${SIMULATION_MESSAGE_RETRY_DELAY:10s}

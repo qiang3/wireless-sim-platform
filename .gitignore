@@ -60,3 +60,13 @@ Desktop.ini
 *.swp
 *.swo
 *~
+
+# Python GRPO worker local environments and generated artifacts
+/python-worker/**/__pycache__/
+/python-worker/**/*.py[cod]
+/python-worker/.idea/
+/python-worker/runs/
+/python-worker/results/
+/python-worker/artifacts/
+/python-worker/pt/
+/python-worker/requirements-lock.txt

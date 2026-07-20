@@ -1,0 +1,9 @@
+# 当前GRPO推理代码直接使用的核心Python依赖。
+# CUDA版PyTorch建议优先通过environment.yml或PyTorch官方源安装。
+gym==0.23.1
+matplotlib==3.9.2
+numpy==1.23.0
+pandas==2.2.3
+pika==1.3.2
+tensorboard==2.18.0
+torch==2.5.0

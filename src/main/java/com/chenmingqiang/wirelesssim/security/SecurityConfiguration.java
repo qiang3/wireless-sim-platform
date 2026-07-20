@@ -14,6 +14,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 
 /**
  * Spring Security 总配置：定义密码加密方式、JWT 角色转换规则和 HTTP 访问控制规则。
@@ -55,7 +56,8 @@ public class SecurityConfiguration {
     SecurityFilterChain securityFilterChain(
             HttpSecurity http,
             JwtAuthenticationConverter authenticationConverter,
-            SecurityErrorWriter errorWriter
+            SecurityErrorWriter errorWriter,
+            WorkerApiAuthenticationFilter workerApiAuthenticationFilter
     ) throws Exception {
         http
                 // JWT API 不依赖浏览器 Cookie，会话也不保存在服务端，因此关闭 CSRF。
@@ -66,9 +68,12 @@ public class SecurityConfiguration {
                         // 注册、登录和健康检查无需令牌，其余接口默认必须登录。
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/register", "/api/v1/auth/login").permitAll()
                         .requestMatchers("/api/v1/system/ping", "/actuator/health", "/error").permitAll()
+                        // 内部Worker不使用用户JWT，而由前置过滤器校验独立的X-Worker-Token。
+                        .requestMatchers("/api/v1/internal/worker/**").permitAll()
                         .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated()
                 )
+                .addFilterBefore(workerApiAuthenticationFilter, BearerTokenAuthenticationFilter.class)
                 // 使用 Spring Security Resource Server 的标准过滤器校验 JWT。
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(authenticationConverter))

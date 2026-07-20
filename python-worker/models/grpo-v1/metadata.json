@@ -1,0 +1,31 @@
+{
+  "modelId": "grpo-rsma-throughput-v1",
+  "algorithm": "GRPO",
+  "modelVersion": 1,
+  "environmentId": "RSMA_ENV",
+  "environmentVersion": 1,
+  "checkpointConfiguredExternally": true,
+  "compatibility": {
+    "accessScheme": "RSMA",
+    "deviceCount": 3,
+    "observationDimension": 15,
+    "actionDimension": 13,
+    "antennaCountUsedByModel": false
+  },
+  "evaluation": {
+    "objective": "THROUGHPUT",
+    "supportsAoi": false,
+    "deterministic": true,
+    "defaultEpisodes": 10,
+    "defaultMaxEpisodeLength": 100,
+    "defaultSeed": 2026
+  },
+  "units": {
+    "wptTransmitPower": "W",
+    "deviceMaxTransmitPower": "mW",
+    "energy": "mJ",
+    "batteryCapacity": "mJ",
+    "dataArrivalRate": "Mb/slot",
+    "dataBufferCapacity": "Mb"
+  }
+}

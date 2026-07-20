@@ -27,6 +27,12 @@ import org.springframework.stereotype.Component;
         havingValue = "rabbitmq"
 )
 @ConditionalOnProperty(
+        prefix = "simulation.execution",
+        name = "worker-mode",
+        havingValue = "java-mock",
+        matchIfMissing = true
+)
+@ConditionalOnProperty(
         prefix = "simulation.messaging",
         name = "consumer-enabled",
         havingValue = "true",
