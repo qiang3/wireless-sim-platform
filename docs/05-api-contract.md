@@ -204,7 +204,6 @@ GET /api/v1/tasks?page=0&size=20&status=PENDING&algorithm=GRPO
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | GET | `/tasks/{id}/result` | 查询本人任务的吞吐量、AoI和收敛信息 |
-| GET | `/tasks/{id}/artifacts` | 后续阶段获取训练曲线、日志等文件清单 |
 
 `GET /api/v1/tasks/{id}/result`成功响应中的`data`示例：
 
@@ -217,10 +216,41 @@ GET /api/v1/tasks?page=0&size=20&status=PENDING&algorithm=GRPO
   "deterministicSeed": 3327,
   "simulationMode": "JAVA_MOCK",
   "scientificResult": false,
+  "metrics": {
+    "deterministicSeed": 3327,
+    "simulationMode": "JAVA_MOCK",
+    "scientificResult": false
+  },
   "artifactPath": null,
   "createdAt": "2026-07-16T23:05:30.000"
 }
 ```
+
+预训练GRPO结果会把旧版JAVA_MOCK兼容字段设为`null`，并在`metrics`中返回完整模型追踪信息：
+
+```json
+{
+  "taskId": 2,
+  "throughput": 39.378569,
+  "averageAoi": null,
+  "convergenceStep": null,
+  "deterministicSeed": null,
+  "simulationMode": null,
+  "scientificResult": null,
+  "metrics": {
+    "evaluationMode": "PRETRAINED_MODEL",
+    "trainingPerformed": false,
+    "modelId": "grpo-rsma-throughput-v1",
+    "checkpointSha256": "<64位摘要>",
+    "baseSeed": 2026,
+    "throughputUnit": "Mbit/episode"
+  },
+  "artifactPath": "<本机推理产物绝对路径>",
+  "createdAt": "2026-07-21T12:00:00"
+}
+```
+
+当前版本没有独立的产物下载接口，`artifactPath`只保存本机结果目录索引。
 
 任务结果尚未产生、任务不存在或任务不属于当前用户时，统一返回404和`TASK_RESULT_NOT_FOUND`，避免通过响应差异枚举他人任务。
 
