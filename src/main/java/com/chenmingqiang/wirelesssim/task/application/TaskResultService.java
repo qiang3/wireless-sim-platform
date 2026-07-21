@@ -2,9 +2,11 @@ package com.chenmingqiang.wirelesssim.task.application;
 
 import com.chenmingqiang.wirelesssim.common.error.BusinessException;
 import com.chenmingqiang.wirelesssim.task.api.TaskResultResponse;
-import com.chenmingqiang.wirelesssim.task.domain.SimulationMetrics;
 import com.chenmingqiang.wirelesssim.task.domain.SimulationResult;
 import com.chenmingqiang.wirelesssim.task.infrastructure.SimulationResultMapper;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,26 +46,50 @@ public class TaskResultService {
                     "任务结果不存在"
             );
         }
-        SimulationMetrics metrics = readMetrics(result.getMetricsJson());
+        Map<String, Object> metrics = readMetrics(result.getMetricsJson());
         return new TaskResultResponse(
                 result.getTaskId(),
                 result.getThroughput(),
                 result.getAverageAoi(),
                 result.getConvergenceStep(),
-                metrics.deterministicSeed(),
-                metrics.simulationMode(),
-                metrics.scientificResult(),
+                longMetric(metrics, "deterministicSeed"),
+                stringMetric(metrics, "simulationMode"),
+                booleanMetric(metrics, "scientificResult"),
+                metrics,
                 result.getArtifactPath(),
                 result.getCreatedAt()
         );
     }
 
-    /** 方法说明：`readMetrics`封装下面这段业务或转换逻辑。 */
-    private SimulationMetrics readMetrics(String json) {
+    /**
+     * 将结果元数据解析为开放结构：JAVA_MOCK与预训练GRPO拥有不同字段，不能再强制映射为同一个三字段对象。
+     * 返回只读Map既保留完整模型追踪信息，也避免调用方意外修改本次响应中的元数据。
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> readMetrics(String json) {
         try {
-            return objectMapper.readValue(json, SimulationMetrics.class);
+            Map<String, Object> parsed = objectMapper.readValue(json, Map.class);
+            return Collections.unmodifiableMap(new LinkedHashMap<>(parsed));
         } catch (JacksonException exception) {
             throw new IllegalStateException("模拟结果指标无法解析", exception);
         }
+    }
+
+    /** 兼容旧版JAVA_MOCK顶层字段；GRPO没有该字段时明确返回null，而不是伪造0。 */
+    private Long longMetric(Map<String, Object> metrics, String name) {
+        Object value = metrics.get(name);
+        return value instanceof Number number ? number.longValue() : null;
+    }
+
+    /** 兼容旧版JAVA_MOCK顶层字段；其他结果类型没有该字段时返回null。 */
+    private String stringMetric(Map<String, Object> metrics, String name) {
+        Object value = metrics.get(name);
+        return value instanceof String text ? text : null;
+    }
+
+    /** 兼容旧版JAVA_MOCK顶层字段；其他结果类型没有该字段时返回null。 */
+    private Boolean booleanMetric(Map<String, Object> metrics, String name) {
+        Object value = metrics.get(name);
+        return value instanceof Boolean flag ? flag : null;
     }
 }

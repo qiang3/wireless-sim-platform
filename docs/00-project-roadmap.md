@@ -34,12 +34,12 @@
 | 6. 实验任务管理 | 已完成 | 任务创建、查询、取消、重试、快照、幂等键 | 重复请求不创建重复任务；状态只能合法流转；并发更新不覆盖 |
 | 7. Java模拟执行与结果 | 已完成 | Java模拟Worker、进度更新、执行记录、结果保存 | 完成“提交—执行—结果查询”闭环；失败任务可重试 |
 | 8. Redis与RabbitMQ | 已完成 | Outbox、可靠消息投递、消费者幂等、重试死信、缓存与限流 | 消息重复消费不产生重复结果；发布或消费异常后任务可恢复；缓存失效不破坏业务正确性 |
-| 9. Python仿真执行器 | 进行中 | Python/PyTorch Worker、预训练GRPO推理、结果回传 | Java可调度预训练模型评估；吞吐量指标可以入库查询 |
+| 9. Python仿真执行器 | 已完成 | Python/PyTorch Worker、预训练GRPO推理、结果回传 | Java可调度预训练模型评估；吞吐量及完整模型元数据可以入库查询 |
 | 10. 工程化与求职材料 | 待开始 | OpenAPI、Docker部署、监控、压测、README、简历和面试材料 | 新环境可按文档启动；关键接口有测试和性能数据；简历表述可被代码与记录支撑 |
 
 ## 4. 当前里程碑
 
-当前里程碑：**阶段9.1已完成独立GRPO预训练模型推理程序，下一步进入阶段9.2 Java/Python任务契约设计**。
+当前里程碑：**阶段9已完成真实Java/RabbitMQ/Python/PyTorch/MySQL链路验收，下一步进入阶段10工程化与求职材料**。
 
 阶段5已于2026-07-16完成并通过验收，交付范围包括：
 
@@ -298,4 +298,15 @@ simulation.task.dlx
 - [x] 9.4：实现Python RabbitMQ消费者并调用独立推理函数；
 - [x] 9.5：验证重复领取、重复完成、单位映射、AoI空值和原有功能回归。
 
-阶段9完成记录：Java新增`simulation.execution.worker-mode`，`java-mock`与`python`模式互斥，防止两个消费者竞争同一主队列。内部API使用`X-Worker-Token`，未配置令牌时默认关闭；领取前校验GRPO、THROUGHPUT、RSMA和3设备边界，成功后返回带显式单位的不可变快照。Python消费者使用`prefetch=1`、手动ACK、有限重试和死信，直接复用9.1推理函数；Java在同一事务内保存任务终态、执行终态、吞吐量与模型追踪信息，AoI保持NULL。最终Java全量97项测试和Python 8项测试全部通过，真实GRPO权重CUDA复现测试通过。设计、契约和验收分别见`docs/12-stage9-grpo-inference-design.md`、`docs/13-python-worker-api-contract.md`和`docs/14-stage9-acceptance.md`。
+阶段9完成记录：Java新增`simulation.execution.worker-mode`，`java-mock`与`python`模式互斥，防止两个消费者竞争同一主队列。内部API使用`X-Worker-Token`，未配置令牌时默认关闭；领取前校验GRPO、THROUGHPUT、RSMA和3设备边界，成功后返回带显式单位的不可变快照。Python消费者使用`prefetch=1`、手动ACK、有限重试和死信，直接复用9.1推理函数；Java在同一事务内保存任务终态、执行终态、吞吐量与模型追踪信息，AoI保持NULL。最终Java全量97项测试和Python 10项测试全部通过，真实GRPO权重CUDA复现测试通过。设计、契约和验收分别见`docs/12-stage9-grpo-inference-design.md`、`docs/13-python-worker-api-contract.md`和`docs/14-stage9-acceptance.md`。
+
+### 9.6：结果查询与真实链路收尾
+
+- [x] 结果查询兼容JAVA_MOCK和预训练GRPO两种异构`metrics_json`；
+- [x] 保留旧版JAVA_MOCK响应字段，同时返回完整`metrics`对象；
+- [x] Python RabbitMQ心跳支持环境变量覆盖，并在连接已关闭时安全退出；
+- [x] Java RabbitMQ心跳和JWT有效期支持环境变量覆盖，默认值仍为30秒和30分钟；
+- [x] 使用真实基础设施和真实GRPO权重手工验证四张业务表与RabbitMQ队列状态闭环；
+- [x] 补充JAVA_MOCK兼容、GRPO元数据和Python心跳配置自动化测试。
+
+完成记录：手工链路依次观察到`experiment_task`从PENDING进入RUNNING并最终SUCCEEDED/100%、`outbox_event`成功发布、`task_execution`形成唯一成功执行记录、`simulation_result`形成唯一结果且吞吐量有值/AoI为空；RabbitMQ最终Ready=0、Unacked=0。断点调试期间发现Pika心跳中断及重复关闭连接问题，最终采用“生产默认30秒、调试环境变量覆盖、安全判断连接状态后关闭”的方案。阶段9至此正式关闭。

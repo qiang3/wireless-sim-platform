@@ -1358,7 +1358,7 @@ RabbitMQ发布、Outbox状态更新、消费和ACK跨越不同事务边界。发
 - 重复领取返回`RESUMABLE`，重复完成返回`ALREADY_HANDLED`，不产生重复记录；
 - Java网络故障走有限延迟重试，永久契约错误进入死信；
 - 使用`worker-mode`保证Java Mock与Python Worker不同时消费主队列。
-- Java全量97项测试、Python 8项测试全部通过；真实GRPO权重CUDA复现结果一致。
+- Java全量97项测试、Python 10项测试全部通过；真实GRPO权重CUDA复现结果一致。
 
 ### 面试可能追问
 
@@ -1408,3 +1408,21 @@ RabbitMQ同一队列上的消费者是竞争关系。如果Java Mock监听器和
 #### 能否宣称Exactly Once？
 
 不能。RabbitMQ投递、HTTP回调、MySQL事务和ACK不在同一个分布式事务中，回调或ACK窗口都可能产生重复。准确表述仍是“At-Least-Once delivery + Effectively-Once business effect”。
+
+## 2026-07-21：阶段9.6真实链路与结果查询收尾
+
+### 为什么GRPO结果已经写进数据库，查询接口仍需要修改？
+
+数据库`metrics_json`允许保存不同执行器的结构，但旧查询代码强制把所有JSON反序列化为`SimulationMetrics(deterministicSeed, simulationMode, scientificResult)`。GRPO使用的是`evaluationMode/modelId/checkpointSha256/baseSeed`等字段，强制套用旧结构会丢失语义，甚至把“不存在”误表示为0或false。收尾方案保留旧兼容字段，同时增加完整`metrics`对象；GRPO不存在的旧字段明确返回null。
+
+### RabbitMQ心跳与任务业务心跳有什么区别？
+
+RabbitMQ心跳由客户端与Broker交换，用于判断TCP/AMQP连接是否存活；`task_execution.heartbeat_at`是平台业务数据，用于判断某次任务执行是否卡死。断点会同时影响两者，但它们属于不同层次，分别由`RABBITMQ_HEARTBEAT_SECONDS`和`SIMULATION_HEARTBEAT_TIMEOUT_SECONDS`控制。
+
+### 为什么断点调试会出现`ConnectionWrongStateError`？
+
+调试器暂停Python线程后，Pika无法按时处理AMQP心跳，Broker先关闭连接。程序退出进入`finally`时若无条件再次调用`close()`，就会对已关闭连接执行重复关闭。正确做法是生产保持较短心跳，调试时临时延长，并在关闭前检查`connection.is_open`。
+
+### 为什么不能直接把心跳永久改成300秒？
+
+心跳越长，真实断网或Worker崩溃越晚被发现。300秒适合长断点，不适合作为统一生产默认值。因此代码默认30秒，调试配置通过环境变量注入，既方便观察又不改变正常故障发现速度。

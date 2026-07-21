@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -11,7 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from worker.java_api import JavaApiError
-from worker.main import RabbitGrpoWorker
+from worker.main import RabbitGrpoWorker, WorkerConfig
 
 
 class FakeChannel:
@@ -97,6 +98,25 @@ class RabbitWorkerFlowTest(unittest.TestCase):
         self.assertEqual([99], channel.acks)
         self.assertEqual("simulation.task.retry.exchange", channel.publishes[0]["exchange"])
         self.assertEqual(2, channel.publishes[0]["properties"].headers["x-delivery-attempt"])
+
+    def test_worker_config_reads_positive_rabbitmq_heartbeat(self):
+        """断点调试可覆盖心跳，生产默认值仍留在代码中而不是永久改大。"""
+        with patch.dict(os.environ, {
+            "SIMULATION_WORKER_TOKEN": "test-token",
+            "GRPO_CHECKPOINT_PATH": "model.pt",
+            "RABBITMQ_HEARTBEAT_SECONDS": "300",
+        }, clear=False):
+            config = WorkerConfig()
+        self.assertEqual(300, config.rabbit_heartbeat_seconds)
+
+    def test_worker_config_rejects_disabled_heartbeat(self):
+        with patch.dict(os.environ, {
+            "SIMULATION_WORKER_TOKEN": "test-token",
+            "GRPO_CHECKPOINT_PATH": "model.pt",
+            "RABBITMQ_HEARTBEAT_SECONDS": "0",
+        }, clear=False):
+            with self.assertRaisesRegex(RuntimeError, "必须大于0"):
+                WorkerConfig()
 
 
 if __name__ == "__main__":

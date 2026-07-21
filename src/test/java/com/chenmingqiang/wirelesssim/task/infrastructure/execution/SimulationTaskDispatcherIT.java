@@ -115,6 +115,9 @@ class SimulationTaskDispatcherIT {
                 .isEqualTo("JAVA_MOCK");
         assertThat(taskResultService.getOwnedResult(userId, taskId).scientificResult())
                 .isFalse();
+        assertThat(taskResultService.getOwnedResult(userId, taskId).metrics())
+                .containsEntry("simulationMode", "JAVA_MOCK")
+                .containsEntry("scientificResult", false);
 
         otherUserId = insertOtherUser();
         assertThatThrownBy(() -> taskResultService.getOwnedResult(otherUserId, taskId))

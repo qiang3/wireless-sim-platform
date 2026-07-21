@@ -21,7 +21,7 @@ spring:
     password: ${RABBITMQ_PASSWORD:wireless_dev}
     virtual-host: ${RABBITMQ_VHOST:wireless_sim}
     connection-timeout: 5s
-    requested-heartbeat: 30s
+    requested-heartbeat: ${RABBITMQ_HEARTBEAT:30s}
     publisher-confirm-type: correlated
     publisher-returns: true
     template:
@@ -57,7 +57,7 @@ app:
   security:
     jwt:
       issuer: wireless-sim-platform
-      access-token-ttl: 30m
+      access-token-ttl: ${JWT_ACCESS_TOKEN_TTL:30m}
       secret-base64: ${JWT_SECRET_BASE64:}
 
 simulation:

@@ -2,6 +2,7 @@ package com.chenmingqiang.wirelesssim.task.api;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Map;
 
 /**
  * 教学注释：本文件为 api/TaskResultResponse.java。
@@ -15,6 +16,7 @@ public record TaskResultResponse(
         Long deterministicSeed,
         String simulationMode,
         Boolean scientificResult,
+        Map<String, Object> metrics,
         String artifactPath,
         LocalDateTime createdAt
 ) {

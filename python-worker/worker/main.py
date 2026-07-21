@@ -33,6 +33,7 @@ class WorkerConfig:
         self.rabbit_username = os.getenv("RABBITMQ_USERNAME", "wireless")
         self.rabbit_password = os.getenv("RABBITMQ_PASSWORD", "wireless_dev")
         self.rabbit_vhost = os.getenv("RABBITMQ_VHOST", "wireless_sim")
+        self.rabbit_heartbeat_seconds = positive_int_env("RABBITMQ_HEARTBEAT_SECONDS", 30)
         self.java_url = os.getenv("JAVA_WORKER_API_URL", "http://localhost:8080")
         self.worker_token = require_env("SIMULATION_WORKER_TOKEN")
         self.checkpoint = str(Path(require_env("GRPO_CHECKPOINT_PATH")).expanduser().resolve())
@@ -46,6 +47,18 @@ def require_env(name: str) -> str:
     if value is None or not value.strip():
         raise RuntimeError(f"必须配置环境变量{name}")
     return value.strip()
+
+
+def positive_int_env(name: str, default: int) -> int:
+    """读取必须大于0的整数环境变量，避免误关闭心跳或传入无效连接参数。"""
+    raw = os.getenv(name, str(default))
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"环境变量{name}必须是整数") from exc
+    if value <= 0:
+        raise RuntimeError(f"环境变量{name}必须大于0")
+    return value
 
 
 def delivery_attempt(headers: Mapping[str, Any] | None) -> int:
@@ -158,7 +171,7 @@ def main() -> None:
     connection = pika.BlockingConnection(pika.ConnectionParameters(
         host=config.rabbit_host, port=config.rabbit_port,
         virtual_host=config.rabbit_vhost, credentials=credentials,
-        heartbeat=30, blocked_connection_timeout=30,
+        heartbeat=config.rabbit_heartbeat_seconds, blocked_connection_timeout=30,
     ))
     channel = connection.channel()
     channel.confirm_delivery()
@@ -169,9 +182,11 @@ def main() -> None:
     try:
         channel.start_consuming()
     except KeyboardInterrupt:
-        channel.stop_consuming()
+        if channel.is_open:
+            channel.stop_consuming()
     finally:
-        connection.close()
+        if connection.is_open:
+            connection.close()
 
 
 if __name__ == "__main__":

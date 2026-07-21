@@ -127,6 +127,7 @@ $env:SIMULATION_WORKER_TOKEN="请替换为随机长令牌"
 $env:GRPO_CHECKPOINT_PATH=(Resolve-Path "python-worker\pt\GRPO.pt").Path
 $env:JAVA_WORKER_API_URL="http://localhost:8080"
 $env:PYTHON_WORKER_ID="python-local-1"
+$env:RABBITMQ_HEARTBEAT_SECONDS="300" # 仅长时间断点调试需要；正常运行不设置，默认30秒
 conda activate pytorch
 python python-worker\worker\main.py
 ```

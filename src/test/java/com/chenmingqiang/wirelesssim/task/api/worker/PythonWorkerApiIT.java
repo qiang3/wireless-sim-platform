@@ -4,6 +4,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.chenmingqiang.wirelesssim.task.api.TaskResultResponse;
+import com.chenmingqiang.wirelesssim.task.application.TaskResultService;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -28,6 +30,7 @@ class PythonWorkerApiIT {
     @Autowired private MockMvc mockMvc;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private TaskResultService taskResultService;
     private Long userId;
 
     @AfterEach
@@ -95,6 +98,17 @@ class PythonWorkerApiIT {
                 "SELECT status FROM experiment_task WHERE id=?", String.class, taskId));
         org.junit.jupiter.api.Assertions.assertNull(jdbcTemplate.queryForObject(
                 "SELECT average_aoi FROM simulation_result WHERE task_id=?", java.math.BigDecimal.class, taskId));
+
+        // 用户查询结果时必须拿到完整GRPO追踪信息，不能被旧JAVA_MOCK三字段结构吞掉。
+        TaskResultResponse result = taskResultService.getOwnedResult(userId, taskId);
+        org.junit.jupiter.api.Assertions.assertNull(result.deterministicSeed());
+        org.junit.jupiter.api.Assertions.assertNull(result.simulationMode());
+        org.junit.jupiter.api.Assertions.assertNull(result.scientificResult());
+        org.junit.jupiter.api.Assertions.assertEquals("PRETRAINED_MODEL", result.metrics().get("evaluationMode"));
+        org.junit.jupiter.api.Assertions.assertEquals(Boolean.FALSE, result.metrics().get("trainingPerformed"));
+        org.junit.jupiter.api.Assertions.assertEquals("grpo-rsma-throughput-v1", result.metrics().get("modelId"));
+        org.junit.jupiter.api.Assertions.assertEquals("a".repeat(64), result.metrics().get("checkpointSha256"));
+        org.junit.jupiter.api.Assertions.assertEquals(2026, ((Number) result.metrics().get("baseSeed")).intValue());
     }
 
     @Test
